@@ -93,6 +93,23 @@ $pdo->query(
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
 );
 
+// ---- import shipped GPG signing key ----
+// FreePBX flags any module not signed by Sangoma's GPG as "Unsigned" on the
+// dashboard. We ship our own public key + a precomputed module.sig; importing
+// the key into the asterisk user's keyring here makes the verifier accept the
+// shipped signature. Idempotent — `gpg --import` of a known key is a no-op.
+//
+// install.php runs as the asterisk user (FreePBX drops privileges), so plain
+// `gpg` targets ~asterisk/.gnupg. If gpg isn't available, we silently degrade
+// to "Unsigned" (no worse than the pre-signing baseline).
+$pubKey = __DIR__ . '/tools/signing-key.pub';
+if (file_exists($pubKey) && function_exists('exec')) {
+    @exec('gpg --import ' . escapeshellarg($pubKey) . ' 2>&1', $gpgOut, $gpgRet);
+    if (function_exists('dbug')) {
+        dbug('conferenceschedules: gpg --import returned ' . (int) $gpgRet);
+    }
+}
+
 // ---- per-minute tick ----
 // addLine() (vs add(array)) is required because Cron->add() rejects
 // "* * * * *" all-wildcard schedules with "Probably a bug" — but we

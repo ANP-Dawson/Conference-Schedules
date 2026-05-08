@@ -1,0 +1,17 @@
+# Hash-stability: every file checked out byte-for-byte identical to what was
+# committed, regardless of platform. Critical because module.sig pins SHA-256
+# hashes of every shipped file — a Windows checkout converting LF→CRLF would
+# silently invalidate the signature.
+* -text
+
+# Re-tag the obvious binaries so git's "is this text?" diff fallback doesn't
+# try to render them as text in pull requests.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.tar binary
+*.tar.gz binary
+*.zip binary
+*.phar binary
