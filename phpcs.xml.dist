@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<ruleset name="conferenceschedules">
+    <description>PSR-12 ruleset for the conferenceschedules FreePBX module.</description>
+
+    <arg name="extensions" value="php"/>
+    <arg name="colors"/>
+    <arg value="sp"/>
+
+    <file>.</file>
+
+    <exclude-pattern>vendor/*</exclude-pattern>
+    <exclude-pattern>tests/fixtures/*</exclude-pattern>
+    <exclude-pattern>i18n/*</exclude-pattern>
+
+    <!--
+        PSR-12 covers class/library code. View templates and the page entry
+        legitimately mix HTML and inline PHP and don't fit PSR-12's control-
+        structure rules; excluding them keeps templates readable.
+    -->
+    <rule ref="PSR12">
+        <exclude-pattern>views/*</exclude-pattern>
+        <exclude-pattern>page.*.php</exclude-pattern>
+    </rule>
+
+    <!--
+        Files that legitimately mix declarations and side effects:
+          - tests/bootstrap.php: requires composer autoload AND defines a gettext shim.
+          - Conferenceschedules.class.php: BMO class must require vendor/autoload.php
+            so our PSR-4 helpers (lib/*) load. FreePBX's autoloader won't follow
+            nested namespaces.
+    -->
+    <rule ref="PSR1.Files.SideEffects">
+        <exclude-pattern>tests/bootstrap.php</exclude-pattern>
+        <exclude-pattern>Conferenceschedules.class.php</exclude-pattern>
+    </rule>
+</ruleset>

@@ -1,0 +1,13 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.cs-tab-content {
+    padding: 16px 4px 4px 4px;
+}
+
+#cs-participants-table input[type="number"] {
+    text-align: right;
+}
+
+#cs-participants-table .cs-participant-row td {
+    vertical-align: middle;
+}

@@ -1,0 +1,19 @@
+# PHPUnit
+.phpunit.result.cache
+.phpunit.cache/
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.tar.gz
+
+# IMPORTANT: do NOT ignore vendor/ — FreePBX modules ship vendor in-tree.
+# IMPORTANT: do NOT ignore composer.lock — pin runtime deps for reproducible installs.

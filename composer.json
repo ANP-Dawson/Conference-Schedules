@@ -1,0 +1,33 @@
+{
+    "name": "dawson/conferenceschedules",
+    "description": "FreePBX module: schedule outbound dial-out conferences",
+    "type": "freepbx-module",
+    "license": "Apache-2.0",
+    "require": {
+        "php": ">=7.4",
+        "dragonmantank/cron-expression": "^3.3"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6",
+        "squizlabs/php_codesniffer": "^3.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "FreePBX\\modules\\Conferenceschedules\\": "lib/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "FreePBX\\modules\\Conferenceschedules\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "lint": "phpcs",
+        "lint-fix": "phpcbf",
+        "test": "phpunit"
+    },
+    "config": {
+        "vendor-dir": "vendor",
+        "sort-packages": true
+    }
+}

@@ -1,0 +1,22 @@
+<module>
+  <rawname>conferenceschedules</rawname>
+  <name>Conference Schedules</name>
+  <version>0.1.0</version>
+  <type>setup</type>
+  <category>Applications</category>
+  <publisher>Dawson</publisher>
+  <license>Apache-2.0</license>
+  <licenselink>https://www.apache.org/licenses/LICENSE-2.0</licenselink>
+  <description>Schedule outbound dial-out conferences. At a defined time, FreePBX originates calls to a participant list and bridges answered legs into an existing conference room. Replaces the cron + Asterisk call-file pattern with an AMI-driven, GUI-managed workflow that records per-leg outcomes.</description>
+  <changelog>
+    *0.1.0* Initial release - Phase 1 MVP (jobs, recurring schedule, participants, AMI originate, history).
+  </changelog>
+  <depends>
+    <version>&gt;=16.0</version>
+    <module>framework ge 16.0</module>
+    <module>conferences</module>
+  </depends>
+  <menuitems>
+    <conferenceschedules needsenginedb="false" category="Applications">Conference Schedules</conferenceschedules>
+  </menuitems>
+</module>
