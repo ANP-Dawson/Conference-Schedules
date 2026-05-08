@@ -70,15 +70,36 @@ sudo fwconsole ma uninstall conferenceschedules
 
 This drops the five `conferenceschedules_*` tables and removes the per-minute cron line.
 
-## Suppressing the "Unsigned Module" dashboard warning
+## Module signing
 
-By default FreePBX flags any module not signed by Sangoma's GPG key with an
-"Unsigned Module(s)" dashboard notification. Community modules (this one included)
-won't carry that signature. To clear the warning, sign the installed copy with
-a local GPG key:
+The repo ships a precomputed `module.sig` (clearsigned SHA-256 manifest of every
+shipped file) and `tools/signing-key.pub` (the maintainer's public GPG key).
+On first install, `install.php` imports the public key into the asterisk user's
+GPG keyring. FreePBX's signature verifier then validates the bundled `module.sig`
+against the imported key and the dashboard's *"Unsigned Module(s)"* notification
+does **not** fire. End users have nothing extra to do — clone, install, done.
+
+`.gitattributes` pins `* -text` so file bytes survive checkout on every platform;
+without that, a Windows clone could mangle line endings and invalidate every
+hash in `module.sig`.
+
+### For the maintainer: re-sign after changes
+
+After editing module files (or running `composer update`), regenerate the sig
+on the FreePBX VM where the private key lives:
 
 ```bash
-# One-time: generate a passphrase-less signing key for the asterisk user
+cd /var/www/html/admin/modules/conferenceschedules
+sudo -u asterisk php tools/sign-module.php
+git add module.sig
+git commit -m "Re-sign module after <change>"
+git push
+```
+
+If you ever lose the private key, generate a fresh one and replace
+`tools/signing-key.pub` along with the new `module.sig`:
+
+```bash
 cat > /tmp/keygen.txt <<'EOF'
 %no-protection
 Key-Type: RSA
@@ -91,16 +112,10 @@ Expire-Date: 0
 EOF
 sudo -u asterisk gpg --batch --gen-key /tmp/keygen.txt
 rm /tmp/keygen.txt
-
-# Sign — re-run after every module update / `composer install`
-cd /var/www/html/admin/modules/conferenceschedules
+sudo -u asterisk gpg --export --armor 'noreply@your-domain.local' \
+    > tools/signing-key.pub
 sudo -u asterisk php tools/sign-module.php
-sudo fwconsole notifications --delete freepbx FW_UNSIGNED
-sudo fwconsole reload
 ```
-
-`module.sig` is host-specific (tied to your GPG key) and is `.gitignore`d. Each
-installation signs its own copy.
 
 ## Required AMI permissions
 
