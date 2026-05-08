@@ -17,13 +17,13 @@ $error  = $cs->getLastError();
 $flash  = null;
 
 if (!empty($_REQUEST['saved'])) {
-    $flash = ['type' => 'success', 'msg' => _('Job saved.')];
+    $flash = ['type' => 'success', 'msg' => _('Schedule saved.')];
 } elseif (!empty($_REQUEST['deleted'])) {
-    $flash = ['type' => 'success', 'msg' => _('Job deleted.')];
+    $flash = ['type' => 'success', 'msg' => _('Schedule deleted.')];
 } elseif (!empty($_REQUEST['fired'])) {
     $flash = [
         'type' => 'info',
-        'msg'  => sprintf(_('Job %d fired.'), (int) $_REQUEST['fired']),
+        'msg'  => sprintf(_('Schedule %d fired.'), (int) $_REQUEST['fired']),
     ];
 }
 
@@ -48,11 +48,12 @@ if ($view === 'history') {
     }
 
     if ($action === 'edit' && !$job) {
-        echo '<div class="alert alert-danger">' . _('Job not found.') . '</div>';
+        echo '<div class="alert alert-danger">' . _('Schedule not found.') . '</div>';
         return;
     }
 
     $conferences = $cs->listConferences();
+    $extensions  = $cs->listExtensions();
     include __DIR__ . '/views/job_form.php';
 } else {
     $jobs = $cs->listJobs();

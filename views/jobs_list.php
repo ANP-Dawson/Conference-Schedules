@@ -47,7 +47,7 @@ $statusLabel = function (?string $status): string {
 
 <p>
   <a href="?display=conferenceschedules&amp;action=add" class="btn btn-primary">
-    <i class="fa fa-plus"></i> <?php echo _('Add new job'); ?>
+    <i class="fa fa-plus"></i> <?php echo _('Add new schedule'); ?>
   </a>
   <a href="?display=conferenceschedules&amp;view=history" class="btn btn-default">
     <i class="fa fa-history"></i> <?php echo _('History'); ?>
@@ -70,7 +70,7 @@ $statusLabel = function (?string $status): string {
     <?php if (empty($jobs)): ?>
       <tr>
         <td colspan="7" class="text-center text-muted">
-          <?php echo _('No jobs yet. Click "Add new job" to create one.'); ?>
+          <?php echo _('No schedules yet. Click "Add new schedule" to create one.'); ?>
         </td>
       </tr>
     <?php else: foreach ($jobs as $job): ?>
@@ -114,13 +114,13 @@ $statusLabel = function (?string $status): string {
           </a>
           <a href="?display=conferenceschedules&amp;action=fire&amp;id=<?php echo (int) $job['id']; ?>"
              class="btn btn-sm btn-warning"
-             onclick="return confirm('<?php echo _('Fire this job now? Phones will ring immediately.'); ?>');"
+             onclick="return confirm('<?php echo _('Fire this schedule now? Phones will ring immediately.'); ?>');"
              title="<?php echo _('Fire Now'); ?>">
             <i class="fa fa-play"></i> <?php echo _('Fire'); ?>
           </a>
           <a href="?display=conferenceschedules&amp;action=delete&amp;id=<?php echo (int) $job['id']; ?>"
              class="btn btn-sm btn-danger"
-             onclick="return confirm('<?php echo _('Delete this job? This cannot be undone.'); ?>');"
+             onclick="return confirm('<?php echo _('Delete this schedule? This cannot be undone.'); ?>');"
              title="<?php echo _('Delete'); ?>">
             <i class="fa fa-trash"></i>
           </a>

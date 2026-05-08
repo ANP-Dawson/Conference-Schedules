@@ -6,6 +6,7 @@
 //   $job          - hydrated job array (from getJob, or $_POST on validation error)
 //                   May be null when adding.
 //   $conferences  - array of ['exten' => ..., 'description' => ...] from listConferences()
+//   $extensions   - array of ['extension' => ..., 'name' => ...] from listExtensions()
 //   $error        - string|null validation error to display
 //   $flash        - flash array | null
 
@@ -21,36 +22,38 @@ $jobConf = $job['conference_exten'] ?? '';
 $jobTz   = $job['timezone']         ?? date_default_timezone_get();
 $jobOn   = isset($job['enabled']) ? (int) $job['enabled'] : 1;
 
-// Phase 1: only "Quick recurring" schedule mode.
-//   - On render after POST error: $job is $_POST, so $job['quick_dows'] +
-//     $job['quick_time'] are present.
-//   - On render from getJob: parse the stored cron_expr back into DOW + time.
-$quickDows = [];
-$quickTime = '10:00';
-
-if (isset($job['quick_dows']) && is_array($job['quick_dows'])) {
-    $quickDows = array_map('strval', $job['quick_dows']);
-    $quickTime = (string) ($job['quick_time'] ?? '10:00');
-} elseif (!empty($job['schedules'][0]['cron_expr'])) {
-    $expr = $job['schedules'][0]['cron_expr'];
-    if (preg_match('/^(\d+)\s+(\d+)\s+\*\s+\*\s+([\d,]+)$/', $expr, $m)) {
-        $quickTime = sprintf('%02d:%02d', (int) $m[2], (int) $m[1]);
-        $codeMap = [
-            0 => 'sun', 1 => 'mon', 2 => 'tue', 3 => 'wed',
-            4 => 'thu', 5 => 'fri', 6 => 'sat',
-        ];
-        foreach (explode(',', $m[3]) as $code) {
-            $code = (int) $code;
-            if (isset($codeMap[$code])) {
-                $quickDows[] = $codeMap[$code];
-            }
-        }
-    }
+// Schedule pre-fill. Three sources, in priority order:
+//   1. $_POST['schedule'] when the form is being redisplayed after a validation error.
+//   2. The first row of $job['schedules'] reverse-parsed via Validators::explainSchedule.
+//   3. Default to weekly at 10:00.
+$sched = ['frequency' => 'weekly', 'time' => '10:00', 'dows' => []];
+if (!empty($job['schedule']) && is_array($job['schedule'])) {
+    $sched = array_merge($sched, $job['schedule']);
+} elseif (!empty($job['schedules'][0])) {
+    $sched = array_merge(
+        $sched,
+        \FreePBX\modules\Conferenceschedules\Validators::explainSchedule($job['schedules'][0])
+    );
 }
 
 $opt = $job['options'] ?? [];
 
 $participants = is_array($job['participants'] ?? null) ? $job['participants'] : [];
+
+$dowOptions = ['mon' => 'Monday', 'tue' => 'Tuesday', 'wed' => 'Wednesday',
+               'thu' => 'Thursday', 'fri' => 'Friday', 'sat' => 'Saturday', 'sun' => 'Sunday'];
+$ordOptions = ['1' => _('First'), '2' => _('Second'), '3' => _('Third'),
+               '4' => _('Fourth'), 'L' => _('Last')];
+
+/**
+ * Render a small tooltip icon. Bootstrap 3 tooltips need JS init —
+ * conferenceschedules.js does that on DOM ready.
+ */
+$help = function (string $text): string {
+    return '<i class="fa fa-question-circle text-muted" style="margin-left:4px"'
+        . ' data-toggle="tooltip" data-placement="right"'
+        . ' title="' . htmlspecialchars($text) . '"></i>';
+};
 ?>
 <h1><?php echo $isEdit ? _('Edit Conference Schedule') : _('New Conference Schedule'); ?></h1>
 
@@ -78,7 +81,7 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
 
   <div class="tab-content cs-tab-content">
 
-    <!-- General -->
+    <!-- ============== General ============== -->
     <div class="tab-pane active" id="cs-tab-general">
       <div class="form-group">
         <label for="cs-name"><?php echo _('Name'); ?> <span class="text-danger">*</span></label>
@@ -136,93 +139,232 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
           <?php echo _('Enabled'); ?>
         </label>
         <p class="help-block">
-          <?php echo _('Disabled jobs are not fired by the scheduler. Fire Now still works.'); ?>
+          <?php echo _('Disabled schedules are not fired by the scheduler. Fire Now still works.'); ?>
         </p>
       </div>
     </div>
 
-    <!-- Schedule (Quick Recurring) -->
+    <!-- ============== Schedule ============== -->
     <div class="tab-pane" id="cs-tab-schedule">
-      <p class="text-muted">
-        <?php echo _('Pick day(s) of the week and a time. The scheduler fires the job at the next matching slot in the job\'s timezone.'); ?>
-      </p>
-
       <div class="form-group">
-        <label><?php echo _('Days of week'); ?></label>
-        <div>
-          <?php foreach (
-              ['mon' => 'Mon', 'tue' => 'Tue', 'wed' => 'Wed', 'thu' => 'Thu',
-               'fri' => 'Fri', 'sat' => 'Sat', 'sun' => 'Sun'] as $code => $label
-          ): ?>
-            <label class="checkbox-inline">
-              <input type="checkbox" name="quick_dows[]" value="<?php echo $code; ?>"
-                <?php if (in_array($code, $quickDows, true)) {
-                    echo ' checked';
-                } ?>>
-              <?php echo $label; ?>
-            </label>
-          <?php endforeach; ?>
+        <label for="cs-sched-freq"><?php echo _('Frequency'); ?></label>
+        <select class="form-control" id="cs-sched-freq" name="schedule[frequency]" style="max-width:380px">
+          <option value="oneoff"           <?php if ($sched['frequency'] === 'oneoff') {
+              echo ' selected';
+          } ?>><?php echo _('One-off (specific date and time)'); ?></option>
+          <option value="daily"            <?php if ($sched['frequency'] === 'daily') {
+              echo ' selected';
+          } ?>><?php echo _('Daily'); ?></option>
+          <option value="weekly"           <?php if ($sched['frequency'] === 'weekly') {
+              echo ' selected';
+          } ?>><?php echo _('Weekly'); ?></option>
+          <option value="monthly_dom"      <?php if ($sched['frequency'] === 'monthly_dom') {
+              echo ' selected';
+          } ?>><?php echo _('Monthly (specific day of month)'); ?></option>
+          <option value="monthly_ordinal"  <?php if ($sched['frequency'] === 'monthly_ordinal') {
+              echo ' selected';
+          } ?>><?php echo _('Monthly (Nth weekday — e.g. first Tuesday)'); ?></option>
+          <option value="quarterly_dom"    <?php if ($sched['frequency'] === 'quarterly_dom') {
+              echo ' selected';
+          } ?>><?php echo _('Quarterly (Jan, Apr, Jul, Oct on a specific day)'); ?></option>
+          <option value="custom_cron"      <?php if ($sched['frequency'] === 'custom_cron') {
+              echo ' selected';
+          } ?>><?php echo _('Custom cron expression (advanced)'); ?></option>
+        </select>
+      </div>
+
+      <!-- One-off -->
+      <div class="cs-sched-section" data-types="oneoff">
+        <div class="form-group">
+          <label for="cs-sched-startdt"><?php echo _('Date and time'); ?></label>
+          <input type="datetime-local" class="form-control" id="cs-sched-startdt"
+                 name="schedule[start_dt]" style="max-width:280px"
+                 value="<?php echo htmlspecialchars($sched['start_dt'] ?? ''); ?>">
         </div>
       </div>
 
-      <div class="form-group">
-        <label for="cs-time"><?php echo _('Time (24h, in job timezone)'); ?></label>
-        <input type="time" class="form-control" id="cs-time" name="quick_time"
-               style="max-width: 200px"
-               value="<?php echo htmlspecialchars($quickTime); ?>">
+      <!-- Daily -->
+      <div class="cs-sched-section" data-types="daily">
+        <div class="form-group">
+          <label for="cs-sched-daily-time"><?php echo _('Time (24h, in schedule timezone)'); ?></label>
+          <input type="time" class="form-control" id="cs-sched-daily-time"
+                 name="schedule[time]" style="max-width:200px"
+                 value="<?php echo htmlspecialchars($sched['time'] ?? '10:00'); ?>"
+                 data-cs-shared-time="1">
+        </div>
       </div>
 
-      <div class="form-group" id="cs-cron-preview-wrap">
+      <!-- Weekly -->
+      <div class="cs-sched-section" data-types="weekly">
+        <div class="form-group">
+          <label><?php echo _('Days of week'); ?></label>
+          <div>
+            <?php foreach ($dowOptions as $code => $label): ?>
+              <label class="checkbox-inline">
+                <input type="checkbox" name="schedule[dows][]" value="<?php echo $code; ?>"
+                  <?php if (in_array($code, (array) ($sched['dows'] ?? []), true)) {
+                      echo ' checked';
+                  } ?>>
+                <?php echo substr($label, 0, 3); ?>
+              </label>
+            <?php endforeach; ?>
+          </div>
+        </div>
+        <div class="form-group">
+          <label for="cs-sched-weekly-time"><?php echo _('Time (24h, in schedule timezone)'); ?></label>
+          <input type="time" class="form-control" id="cs-sched-weekly-time"
+                 name="schedule[time]" style="max-width:200px"
+                 value="<?php echo htmlspecialchars($sched['time'] ?? '10:00'); ?>"
+                 data-cs-shared-time="1">
+        </div>
+      </div>
+
+      <!-- Monthly (specific day) -->
+      <div class="cs-sched-section" data-types="monthly_dom quarterly_dom">
+        <div class="form-group">
+          <label for="cs-sched-dom"><?php echo _('Day of month'); ?></label>
+          <input type="number" class="form-control" id="cs-sched-dom"
+                 name="schedule[dom]" style="max-width:120px"
+                 min="1" max="28"
+                 value="<?php echo (int) ($sched['dom'] ?? 1); ?>">
+          <p class="help-block">
+            <?php echo _('1-28 (capped at 28 so February is always covered).'); ?>
+          </p>
+        </div>
+        <div class="form-group">
+          <label for="cs-sched-monthly-time"><?php echo _('Time (24h, in schedule timezone)'); ?></label>
+          <input type="time" class="form-control" id="cs-sched-monthly-time"
+                 name="schedule[time]" style="max-width:200px"
+                 value="<?php echo htmlspecialchars($sched['time'] ?? '10:00'); ?>"
+                 data-cs-shared-time="1">
+        </div>
+      </div>
+
+      <!-- Monthly (Nth weekday) -->
+      <div class="cs-sched-section" data-types="monthly_ordinal">
+        <div class="form-group form-inline">
+          <label><?php echo _('On the'); ?></label>
+          <select name="schedule[ordinal]" class="form-control" style="max-width:140px">
+            <?php foreach ($ordOptions as $val => $label): ?>
+              <option value="<?php echo $val; ?>"
+                <?php if (($sched['ordinal'] ?? '') === $val) {
+                    echo ' selected';
+                } ?>><?php echo $label; ?></option>
+            <?php endforeach; ?>
+          </select>
+          <select name="schedule[dow]" class="form-control" style="max-width:160px">
+            <?php foreach ($dowOptions as $code => $label): ?>
+              <option value="<?php echo $code; ?>"
+                <?php if (($sched['dow'] ?? '') === $code) {
+                    echo ' selected';
+                } ?>><?php echo $label; ?></option>
+            <?php endforeach; ?>
+          </select>
+          <label><?php echo _('of every month at'); ?></label>
+          <input type="time" class="form-control" name="schedule[time]"
+                 style="max-width:160px"
+                 value="<?php echo htmlspecialchars($sched['time'] ?? '10:00'); ?>"
+                 data-cs-shared-time="1">
+        </div>
+      </div>
+
+      <!-- Custom cron -->
+      <div class="cs-sched-section" data-types="custom_cron">
+        <div class="form-group">
+          <label for="cs-sched-cron"><?php echo _('Cron expression (5 fields)'); ?></label>
+          <input type="text" class="form-control" id="cs-sched-cron"
+                 name="schedule[cron_expr]" style="max-width:340px;font-family:monospace"
+                 placeholder="0 10 * * 2"
+                 value="<?php echo htmlspecialchars($sched['cron_expr'] ?? ''); ?>">
+          <p class="help-block">
+            <?php echo _('Format: minute hour day-of-month month day-of-week.'); ?>
+            <a href="https://crontab.guru/" target="_blank" rel="noopener">crontab.guru</a>
+          </p>
+        </div>
+      </div>
+
+      <hr>
+      <div id="cs-fire-preview-wrap">
         <p class="text-muted">
-          <small><?php echo _('Pick at least one day and a time to see the next 5 fire times.'); ?></small>
+          <small><?php echo _('Pick a frequency to see the next 5 fire times.'); ?></small>
         </p>
       </div>
     </div>
 
-    <!-- Participants -->
+    <!-- ============== Participants ============== -->
     <div class="tab-pane" id="cs-tab-participants">
       <p class="text-muted">
-        <?php echo _('Phones to ring when the job fires. Use Sort Order to control fire order (low to high).'); ?>
+        <?php echo _('Phones to ring when the schedule fires. Drag rows to reorder; the order determines fire order.'); ?>
       </p>
 
       <table class="table" id="cs-participants-table">
         <thead>
           <tr>
-            <th style="width:80px"><?php echo _('Order'); ?></th>
-            <th style="width:150px"><?php echo _('Kind'); ?></th>
+            <th style="width:30px"></th>
+            <th style="width:140px"><?php echo _('Kind'); ?></th>
             <th><?php echo _('Number / Extension'); ?></th>
             <th><?php echo _('Display name'); ?></th>
-            <th style="width:60px"></th>
+            <th style="width:50px"></th>
           </tr>
         </thead>
-        <tbody>
-          <?php foreach ($participants as $i => $p): ?>
+        <tbody class="cs-sortable">
+          <?php foreach ($participants as $i => $p):
+              $kind = (string) ($p['kind'] ?? 'extension');
+              $value = (string) ($p['value'] ?? '');
+              $matchesExt = false;
+              if ($kind === 'extension') {
+                  foreach ($extensions as $e) {
+                      if ($e['extension'] === $value) {
+                          $matchesExt = true;
+                          break;
+                      }
+                  }
+              }
+          ?>
             <tr class="cs-participant-row">
-              <td>
-                <input type="number" name="participants[<?php echo $i; ?>][sort_order]"
-                       class="form-control"
-                       value="<?php echo (int) ($p['sort_order'] ?? $i); ?>" min="0">
+              <td class="cs-drag-handle" style="cursor:move;text-align:center;color:#999">
+                <i class="fa fa-bars"></i>
               </td>
               <td>
-                <select name="participants[<?php echo $i; ?>][kind]" class="form-control">
+                <select name="participants[<?php echo $i; ?>][kind]" class="form-control cs-kind">
                   <option value="extension"
-                    <?php if (($p['kind'] ?? '') === 'extension') {
+                    <?php if ($kind === 'extension') {
                         echo ' selected';
-                    } ?>>
-                    <?php echo _('Extension'); ?>
-                  </option>
+                    } ?>><?php echo _('Extension'); ?></option>
                   <option value="external"
-                    <?php if (($p['kind'] ?? '') === 'external') {
+                    <?php if ($kind === 'external') {
                         echo ' selected';
-                    } ?>>
-                    <?php echo _('External'); ?>
-                  </option>
+                    } ?>><?php echo _('External'); ?></option>
                 </select>
               </td>
               <td>
-                <input type="text" name="participants[<?php echo $i; ?>][value]"
-                       class="form-control"
-                       value="<?php echo htmlspecialchars($p['value'] ?? ''); ?>" required>
+                <select class="form-control cs-ext-picker"
+                        data-target-name="participants[<?php echo $i; ?>][value]"
+                        <?php if ($kind !== 'extension') {
+                            echo 'style="display:none"';
+                        } ?>>
+                  <option value=""><?php echo _('-- pick an extension --'); ?></option>
+                  <?php foreach ($extensions as $e): ?>
+                    <option value="<?php echo htmlspecialchars($e['extension']); ?>"
+                      <?php if ($matchesExt && $e['extension'] === $value) {
+                          echo ' selected';
+                      } ?>>
+                      <?php echo htmlspecialchars(
+                          $e['extension']
+                          . (empty($e['name']) ? '' : ' — ' . $e['name'])
+                      ); ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+                <input type="text" class="form-control cs-ext-text"
+                       name="participants[<?php echo $i; ?>][value]"
+                       value="<?php echo htmlspecialchars($value); ?>"
+                       placeholder="<?php echo $kind === 'external'
+                           ? '+15551234567'
+                           : _('e.g. 1001'); ?>"
+                       <?php if ($kind === 'extension') {
+                           echo 'style="display:none"';
+                       } ?>>
               </td>
               <td>
                 <input type="text" name="participants[<?php echo $i; ?>][display_name]"
@@ -230,7 +372,10 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
                        value="<?php echo htmlspecialchars($p['display_name'] ?? ''); ?>">
               </td>
               <td class="text-right">
-                <button type="button" class="btn btn-sm btn-danger cs-remove-row" title="<?php echo _('Remove'); ?>">
+                <input type="hidden" name="participants[<?php echo $i; ?>][sort_order]"
+                       class="cs-sort-order" value="<?php echo (int) ($p['sort_order'] ?? $i); ?>">
+                <button type="button" class="btn btn-sm btn-danger cs-remove-row"
+                        title="<?php echo _('Remove'); ?>">
                   <i class="fa fa-times"></i>
                 </button>
               </td>
@@ -246,18 +391,35 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
       <!-- Template row used by the JS to append new participants. -->
       <template id="cs-participant-template">
         <tr class="cs-participant-row">
-          <td>
-            <input type="number" name="participants[__I__][sort_order]" class="form-control" value="0" min="0">
+          <td class="cs-drag-handle" style="cursor:move;text-align:center;color:#999">
+            <i class="fa fa-bars"></i>
           </td>
           <td>
-            <select name="participants[__I__][kind]" class="form-control">
+            <select name="participants[__I__][kind]" class="form-control cs-kind">
               <option value="extension"><?php echo _('Extension'); ?></option>
               <option value="external"><?php echo _('External'); ?></option>
             </select>
           </td>
-          <td><input type="text" name="participants[__I__][value]" class="form-control" required></td>
+          <td>
+            <select class="form-control cs-ext-picker"
+                    data-target-name="participants[__I__][value]">
+              <option value=""><?php echo _('-- pick an extension --'); ?></option>
+              <?php foreach ($extensions as $e): ?>
+                <option value="<?php echo htmlspecialchars($e['extension']); ?>">
+                  <?php echo htmlspecialchars(
+                      $e['extension']
+                      . (empty($e['name']) ? '' : ' — ' . $e['name'])
+                  ); ?>
+                </option>
+              <?php endforeach; ?>
+            </select>
+            <input type="text" class="form-control cs-ext-text"
+                   name="participants[__I__][value]"
+                   placeholder="<?php echo _('e.g. 1001'); ?>" style="display:none">
+          </td>
           <td><input type="text" name="participants[__I__][display_name]" class="form-control"></td>
           <td class="text-right">
+            <input type="hidden" name="participants[__I__][sort_order]" class="cs-sort-order" value="0">
             <button type="button" class="btn btn-sm btn-danger cs-remove-row">
               <i class="fa fa-times"></i>
             </button>
@@ -266,44 +428,57 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
       </template>
     </div>
 
-    <!-- Options -->
+    <!-- ============== Options ============== -->
     <div class="tab-pane" id="cs-tab-options">
       <div class="form-group">
-        <label for="cs-cidn"><?php echo _('Caller ID name'); ?></label>
+        <label for="cs-cidn">
+          <?php echo _('Caller ID name'); ?>
+          <?php echo $help(_('Display name shown on participants\' phones when they ring. Leave blank to inherit the caller ID set on the outbound route used to reach the number.')); ?>
+        </label>
         <input type="text" class="form-control" id="cs-cidn" name="options[caller_id_name]"
-               maxlength="64" value="<?php echo htmlspecialchars($opt['caller_id_name'] ?? ''); ?>">
+               maxlength="64"
+               placeholder="<?php echo _('(use outbound route default)'); ?>"
+               value="<?php echo htmlspecialchars($opt['caller_id_name'] ?? ''); ?>">
       </div>
 
       <div class="form-group">
-        <label for="cs-cidnum"><?php echo _('Caller ID number'); ?></label>
+        <label for="cs-cidnum">
+          <?php echo _('Caller ID number'); ?>
+          <?php echo $help(_('Phone number shown on participants\' phones. Leave blank to inherit the outbound route\'s caller ID.')); ?>
+        </label>
         <input type="text" class="form-control" id="cs-cidnum" name="options[caller_id_num]"
-               maxlength="32" value="<?php echo htmlspecialchars($opt['caller_id_num'] ?? ''); ?>">
+               maxlength="32"
+               placeholder="<?php echo _('(use outbound route default)'); ?>"
+               value="<?php echo htmlspecialchars($opt['caller_id_num'] ?? ''); ?>">
       </div>
 
       <div class="form-group">
-        <label for="cs-wait"><?php echo _('Wait time (seconds)'); ?></label>
+        <label for="cs-wait">
+          <?php echo _('Wait time (seconds)'); ?>
+          <?php echo $help(_('How long Asterisk rings each participant before giving up on that leg. Range 5-300.')); ?>
+        </label>
         <input type="number" class="form-control" id="cs-wait" name="options[wait_time_sec]"
-               style="max-width: 200px"
+               style="max-width:200px"
                min="5" max="300" value="<?php echo (int) ($opt['wait_time_sec'] ?? 45); ?>">
-        <p class="help-block">
-          <?php echo _('How long to ring each leg before giving up (5-300).'); ?>
-        </p>
       </div>
 
       <div class="form-group">
-        <label for="cs-cp"><?php echo _('Concurrency policy'); ?></label>
-        <select class="form-control" id="cs-cp" name="options[concurrency_policy]">
+        <label for="cs-cp">
+          <?php echo _('Concurrency policy'); ?>
+          <?php echo $help(_('Skip if already in room: when the schedule fires, don\'t dial participants who are currently in the conference room — only ring the others (default). Force new: dial every participant, even those already in the room.')); ?>
+        </label>
+        <select class="form-control" id="cs-cp" name="options[concurrency_policy]" style="max-width:420px">
           <option value="skip_if_active"
             <?php if (($opt['concurrency_policy'] ?? 'skip_if_active') === 'skip_if_active') {
                 echo ' selected';
             } ?>>
-            <?php echo _('Skip if conference is already active'); ?>
+            <?php echo _('Skip participants already in the conference (default)'); ?>
           </option>
           <option value="force_new"
             <?php if (($opt['concurrency_policy'] ?? '') === 'force_new') {
                 echo ' selected';
             } ?>>
-            <?php echo _('Fire anyway (force new)'); ?>
+            <?php echo _('Ring everyone (even those already in the room)'); ?>
           </option>
         </select>
       </div>
@@ -322,7 +497,7 @@ $participants = is_array($job['participants'] ?? null) ? $job['participants'] : 
     <?php if ($isEdit): ?>
       <a href="?display=conferenceschedules&amp;action=delete&amp;id=<?php echo $jobId; ?>"
          class="btn btn-danger pull-right"
-         onclick="return confirm('<?php echo _('Delete this job? This cannot be undone.'); ?>');">
+         onclick="return confirm('<?php echo _('Delete this schedule? This cannot be undone.'); ?>');">
         <i class="fa fa-trash"></i> <?php echo _('Delete'); ?>
       </a>
     <?php endif; ?>

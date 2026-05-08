@@ -11,3 +11,27 @@
 #cs-participants-table .cs-participant-row td {
     vertical-align: middle;
 }
+
+#cs-participants-table .cs-drag-handle {
+    width: 30px;
+}
+
+#cs-participants-table .cs-drag-handle:hover {
+    color: #555 !important;
+}
+
+.cs-sortable-placeholder {
+    background: #fff8d2;
+    height: 38px;
+    border: 1px dashed #d8c97a;
+}
+
+.cs-sched-section {
+    padding-left: 12px;
+    border-left: 3px solid #eee;
+    margin-bottom: 12px;
+}
+
+#cs-fire-preview-wrap ul {
+    margin-bottom: 0;
+}

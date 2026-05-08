@@ -26,6 +26,9 @@ function ok(string $msg, bool $cond) {
 
 // --- fixtures ----------------------------------------------------------------
 $confExten = '99001';
+// Idempotent setup: wipe any stale state from prior runs that may have
+// crashed before reaching their teardown (e.g. partial schema migrations).
+$db->prepare("DELETE FROM conferenceschedules_jobs WHERE name LIKE 'BMO %'")->execute();
 $db->prepare("DELETE FROM meetme WHERE exten = :e")->execute([':e' => $confExten]);
 $db->prepare(
     "INSERT INTO meetme (exten, description, userpin, adminpin, options, music, users, language, timeout)
@@ -203,34 +206,87 @@ try {
     ok('saveJob with cron schedule did NOT throw: ' . $e->getMessage(), false);
 }
 
-// --- previewQuickRecurring ---------------------------------------------------
-$preview = $mod->previewQuickRecurring(['tue'], '10:00', 'UTC', 5);
-ok('previewQuickRecurring cron compiled correctly', $preview['cron'] === '0 10 * * 2');
-ok('previewQuickRecurring returned 5 times', count($preview['times'] ?? []) === 5);
-ok('previewQuickRecurring all times contain 10:00',
+// --- previewSchedule ---------------------------------------------------------
+$preview = $mod->previewSchedule(
+    ['frequency' => 'weekly', 'dows' => ['tue'], 'time' => '10:00'],
+    'UTC',
+    5
+);
+ok('previewSchedule weekly returned 5 times', count($preview['times'] ?? []) === 5);
+ok('previewSchedule weekly all times contain 10:00',
     count(array_filter($preview['times'], fn($t) => strpos($t, '10:00') !== false)) === 5);
+ok('previewSchedule weekly compiled to standard cron',
+    ($preview['compiled']['cron_expr'] ?? null) === '0 10 * * 2');
+
+// Monthly Nth weekday: "first Tuesday of every month at 10am" — uses our
+// custom @nth: format and DateTime arithmetic, not extended cron.
+$nth = $mod->previewSchedule(
+    ['frequency' => 'monthly_ordinal', 'ordinal' => '1', 'dow' => 'tue', 'time' => '10:00'],
+    'UTC',
+    3
+);
+ok('previewSchedule monthly_ordinal compiled to @nth: format',
+    ($nth['compiled']['cron_expr'] ?? '') === '@nth:1:2:10:00');
+ok('previewSchedule monthly_ordinal returned 3 times', count($nth['times'] ?? []) === 3);
+// All returned times should be Tuesdays at 10:00 in the first week of their month.
+$allFirstTues = true;
+foreach ($nth['times'] ?? [] as $t) {
+    $date = explode(' ', $t)[0] ?? '';
+    if (!$date) { $allFirstTues = false; break; }
+    $dt = new DateTime($date);
+    if ($dt->format('w') !== '2' || (int) $dt->format('j') > 7) {
+        $allFirstTues = false;
+        break;
+    }
+}
+ok('previewSchedule first-Tuesday all match weekday=Tue and day-of-month <= 7', $allFirstTues);
+
+// Quarterly
+$q = $mod->previewSchedule(
+    ['frequency' => 'quarterly_dom', 'dom' => 1, 'time' => '09:00'],
+    'UTC',
+    4
+);
+ok('previewSchedule quarterly compiled to multi-month cron',
+    ($q['compiled']['cron_expr'] ?? '') === '0 9 1 1,4,7,10 *');
 
 // --- AJAX endpoint -----------------------------------------------------------
 $_REQUEST = [
-    'command' => 'preview-quick-recurring',
-    'dows'    => ['mon', 'wed', 'fri'],
-    'time'    => '14:30',
-    'tz'      => 'America/Chicago',
+    'command'  => 'preview-schedule',
+    'schedule' => ['frequency' => 'weekly', 'dows' => ['mon', 'wed', 'fri'], 'time' => '14:30'],
+    'tz'       => 'America/Chicago',
 ];
 $ajaxSetting = null;
-ok('ajaxRequest permits preview-quick-recurring',
-    $mod->ajaxRequest('preview-quick-recurring', $ajaxSetting) === true);
+ok('ajaxRequest permits preview-schedule',
+    $mod->ajaxRequest('preview-schedule', $ajaxSetting) === true);
 ok('ajaxRequest denies unknown command',
     $mod->ajaxRequest('drop-tables', $ajaxSetting) === false);
 $ajaxResp = $mod->ajaxHandler();
 ok('ajaxHandler returns success', ($ajaxResp['status'] ?? false) === true);
 ok('ajaxHandler returns 5 times', count($ajaxResp['times'] ?? []) === 5);
-ok('ajaxHandler returns compiled cron', ($ajaxResp['cron'] ?? null) === '30 14 * * 1,3,5');
+ok('ajaxHandler returns compiled cron',
+    ($ajaxResp['compiled']['cron_expr'] ?? null) === '30 14 * * 1,3,5');
 
 // Bad input via AJAX surfaces an error rather than throwing.
-$_REQUEST['dows'] = ['nopeday'];
+$_REQUEST['schedule'] = ['frequency' => 'weekly', 'dows' => ['nopeday'], 'time' => '10:00'];
 $ajaxBad = $mod->ajaxHandler();
 ok('ajaxHandler reports bad input as status:false', ($ajaxBad['status'] ?? null) === false);
+
+// Form-mode saveJob: pass `schedule` (singular, frequency-based) instead of `schedules` (array).
+$formId = $mod->saveJob([
+    'name'             => 'BMO Form-Mode',
+    'conference_exten' => $confExten,
+    'enabled'          => 1,
+    'timezone'         => 'UTC',
+    'schedule'         => ['frequency' => 'monthly_ordinal', 'ordinal' => '1', 'dow' => 'tue', 'time' => '10:00'],
+    'participants'     => [['kind' => 'extension', 'value' => '101']],
+]);
+$formJob = $mod->getJob($formId);
+ok('form-mode saveJob compiled schedule[0] to @nth:',
+    ($formJob['schedules'][0]['cron_expr'] ?? '') === '@nth:1:2:10:00');
+ok('form-mode saveJob populated next_fire_utc for @nth: schedule',
+    !empty($formJob['next_fire_utc']));
+$mod->deleteJob($formId);
 
 // --- fireJob (Step 8) --------------------------------------------------------
 // Empty participants → 'failed' history row.
@@ -281,9 +337,83 @@ ok('history participants_json has 2 legs', count($pj) === 2);
 ok('each leg has a response field',
     is_array($pj) && count(array_filter($pj, fn($l) => isset($l['response']))) === count($pj));
 
+// Per-participant skip-if-active filter — use the test-only activeOverride
+// to simulate "99998 is already in the conference".
+$skipId = $mod->saveJob([
+    'name'             => 'BMO Skip-If-In-Room',
+    'conference_exten' => $confExten,
+    'enabled'          => 1,
+    'timezone'         => 'UTC',
+    'options'          => ['wait_time_sec' => 10, 'concurrency_policy' => 'skip_if_active'],
+    'schedules'        => [],
+    'participants'     => [
+        ['kind' => 'extension', 'value' => '99998', 'display_name' => 'Already-in'],
+        ['kind' => 'extension', 'value' => '99997', 'display_name' => 'Not-in'],
+    ],
+]);
+$mod->activeOverride = ['99998'];  // pretend 99998 is in the room
+$mod->fireJob($skipId);
+$mod->activeOverride = null;
+
+$skipHist = $mod->listHistory($skipId);
+$skipRow = $skipHist[0] ?? [];
+$skipLegs = json_decode($skipRow['participants_json'] ?? '[]', true) ?: [];
+
+$skipped99998 = current(array_filter($skipLegs, fn($l) => ($l['value'] ?? null) === '99998'));
+$dialed99997  = current(array_filter($skipLegs, fn($l) => ($l['value'] ?? null) === '99997'));
+
+ok('skip_if_active: 99998 leg recorded as Skipped',
+    is_array($skipped99998) && ($skipped99998['response'] ?? null) === 'Skipped');
+ok('skip_if_active: 99998 leg has "Already in" message',
+    is_array($skipped99998) && stripos((string) ($skipped99998['message'] ?? ''), 'Already in') !== false);
+ok('skip_if_active: 99997 leg was actually dialed (not Skipped)',
+    is_array($dialed99997) && ($dialed99997['response'] ?? null) !== 'Skipped');
+
+// force_new bypasses the per-participant skip even when activeOverride is set.
+$forceId = $mod->saveJob([
+    'name'             => 'BMO Force-New',
+    'conference_exten' => $confExten,
+    'enabled'          => 1,
+    'timezone'         => 'UTC',
+    'options'          => ['wait_time_sec' => 10, 'concurrency_policy' => 'force_new'],
+    'schedules'        => [],
+    'participants'     => [
+        ['kind' => 'extension', 'value' => '99998', 'display_name' => 'Already-in'],
+    ],
+]);
+$mod->activeOverride = ['99998'];
+$mod->fireJob($forceId);
+$mod->activeOverride = null;
+
+$forceLegs = json_decode($mod->listHistory($forceId)[0]['participants_json'] ?? '[]', true) ?: [];
+ok('force_new: 99998 was dialed despite being in the room',
+    !empty($forceLegs) && ($forceLegs[0]['response'] ?? null) !== 'Skipped');
+
+// Status semantics: when ALL participants are skipped, history status is 'skipped'.
+$allSkipId = $mod->saveJob([
+    'name'             => 'BMO All-Skipped',
+    'conference_exten' => $confExten,
+    'enabled'          => 1,
+    'timezone'         => 'UTC',
+    'options'          => ['wait_time_sec' => 10, 'concurrency_policy' => 'skip_if_active'],
+    'schedules'        => [],
+    'participants'     => [
+        ['kind' => 'extension', 'value' => '99996', 'display_name' => 'A'],
+        ['kind' => 'extension', 'value' => '99995', 'display_name' => 'B'],
+    ],
+]);
+$mod->activeOverride = ['99996', '99995'];
+$mod->fireJob($allSkipId);
+$mod->activeOverride = null;
+ok('all-skipped fire: history status=skipped',
+    ($mod->listHistory($allSkipId)[0]['status'] ?? '') === 'skipped');
+
 // Cleanup
 $mod->deleteJob($emptyId);
 $mod->deleteJob($liveId);
+$mod->deleteJob($skipId);
+$mod->deleteJob($forceId);
+$mod->deleteJob($allSkipId);
 
 // --- processTick (Step 8) ----------------------------------------------------
 // processTick should be a no-op when no enabled jobs are due.

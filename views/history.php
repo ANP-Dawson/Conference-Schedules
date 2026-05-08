@@ -46,9 +46,9 @@ $fmtUtc = function (?string $utc): string {
   <input type="hidden" name="display" value="conferenceschedules">
   <input type="hidden" name="view" value="history">
   <div class="form-group">
-    <label for="cs-h-job"><?php echo _('Filter by job'); ?>:</label>
+    <label for="cs-h-job"><?php echo _('Filter by schedule'); ?>:</label>
     <select name="job_id" id="cs-h-job" class="form-control" onchange="this.form.submit()">
-      <option value=""><?php echo _('— all jobs —'); ?></option>
+      <option value=""><?php echo _('— all schedules —'); ?></option>
       <?php foreach ($jobs as $j): ?>
         <option value="<?php echo (int) $j['id']; ?>"
           <?php if ($jobFilter === (int) $j['id']) {
@@ -60,7 +60,7 @@ $fmtUtc = function (?string $utc): string {
     </select>
   </div>
   <a href="?display=conferenceschedules" class="btn btn-default">
-    <i class="fa fa-arrow-left"></i> <?php echo _('Back to jobs'); ?>
+    <i class="fa fa-arrow-left"></i> <?php echo _('Back to schedules'); ?>
   </a>
 </form>
 
@@ -68,7 +68,7 @@ $fmtUtc = function (?string $utc): string {
   <thead>
     <tr>
       <th style="width:30px"></th>
-      <th><?php echo _('Job'); ?></th>
+      <th><?php echo _('Schedule'); ?></th>
       <th><?php echo _('Fired at (UTC)'); ?></th>
       <th><?php echo _('Status'); ?></th>
       <th><?php echo _('Legs'); ?></th>
@@ -79,7 +79,7 @@ $fmtUtc = function (?string $utc): string {
     <?php if (empty($rows)): ?>
       <tr>
         <td colspan="6" class="text-center text-muted">
-          <?php echo _('No history yet. Fire a job (or wait for the scheduler) to populate this table.'); ?>
+          <?php echo _('No history yet. Fire a schedule (or wait for the scheduler) to populate this table.'); ?>
         </td>
       </tr>
     <?php else: foreach ($rows as $row): ?>
@@ -104,7 +104,7 @@ $fmtUtc = function (?string $utc): string {
             </a>
           <?php else: ?>
             <span class="text-muted">
-              <?php echo htmlspecialchars(sprintf(_('(deleted job %d)'), (int) $row['job_id'])); ?>
+              <?php echo htmlspecialchars(sprintf(_('(deleted schedule %d)'), (int) $row['job_id'])); ?>
             </span>
           <?php endif; ?>
         </td>

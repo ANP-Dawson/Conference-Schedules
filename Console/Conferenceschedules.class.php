@@ -18,12 +18,12 @@ class Conferenceschedules extends Command
     protected function configure()
     {
         $this->setName('conferenceschedules:tick')
-             ->setDescription(_('Fire conference schedule jobs whose next_fire_utc has elapsed'))
+             ->setDescription(_('Fire schedules whose next_fire_utc has elapsed'))
              ->addOption(
                  'dry-run',
                  null,
                  InputOption::VALUE_NONE,
-                 _('Log due jobs without dispatching AMI Originate calls')
+                 _('Log due schedules without dispatching AMI Originate calls')
              );
     }
 
@@ -34,7 +34,7 @@ class Conferenceschedules extends Command
         $now    = gmdate('Y-m-d H:i:s');
 
         if ($dryRun) {
-            // Just enumerate due jobs without firing.
+            // Just enumerate due schedules without firing.
             $db = \FreePBX::Database();
             $stmt = $db->prepare(
                 "SELECT id, name, next_fire_utc FROM conferenceschedules_jobs
@@ -43,10 +43,10 @@ class Conferenceschedules extends Command
             );
             $stmt->execute();
             $due = $stmt->fetchAll(\PDO::FETCH_ASSOC);
-            $output->writeln(sprintf('<info>[dry-run] %s — %d job(s) due</info>', $now, count($due)));
+            $output->writeln(sprintf('<info>[dry-run] %s — %d schedule(s) due</info>', $now, count($due)));
             foreach ($due as $row) {
                 $output->writeln(sprintf(
-                    '  • job=%d name=%s next_fire_utc=%s',
+                    '  • schedule=%d name=%s next_fire_utc=%s',
                     $row['id'],
                     $row['name'],
                     $row['next_fire_utc']
@@ -57,18 +57,18 @@ class Conferenceschedules extends Command
 
         $report = $bmo->processTick();
         $output->writeln(sprintf(
-            '<info>%s — %d/%d jobs fired</info>',
+            '<info>%s — %d/%d schedules fired</info>',
             $now,
             $report['fired'],
             $report['count']
         ));
         foreach ($report['errors'] as $err) {
-            $output->writeln(sprintf('<error>job %d: %s</error>', $err['job_id'], $err['error']));
+            $output->writeln(sprintf('<error>schedule %d: %s</error>', $err['job_id'], $err['error']));
         }
 
         if (function_exists('dbug')) {
             dbug(sprintf(
-                'conferenceschedules:tick %sZ fired=%d total=%d errors=%d',
+                'conferenceschedules:tick %sZ fired=%d total=%d errors=%d (schedules)',
                 $now,
                 $report['fired'],
                 $report['count'],

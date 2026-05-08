@@ -24,6 +24,16 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     /** @var PDO */
     private $db;
 
+    /**
+     * Test-only override for getActiveConferenceParticipants. When set,
+     * fireJob uses this list instead of querying AMI. Lets the smoke test
+     * exercise the per-participant skip path without needing a real
+     * occupied conference room.
+     *
+     * @var array<int,string>|null
+     */
+    public $activeOverride = null;
+
     public function __construct($freepbx = null)
     {
         if ($freepbx === null) {
@@ -68,11 +78,11 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
 
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'save') {
             try {
-                $newId = $this->saveJob($_POST);
+                $this->saveJob($_POST);
                 needreload();
-                // Redirect-after-POST via the URL: rewrite to edit view.
-                $_REQUEST['action'] = 'edit';
-                $_REQUEST['id']     = $newId;
+                // Redirect-after-POST: drop into the jobs list with a flash.
+                $_REQUEST['action'] = '';
+                unset($_REQUEST['id']);
                 $_REQUEST['saved']  = 1;
             } catch (\InvalidArgumentException $e) {
                 $this->lastError    = $e->getMessage();
@@ -250,19 +260,12 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
      */
     public function saveJob(array $post)
     {
-        // Quick recurring form mode: when the form posts quick_dows[] +
-        // quick_time, synthesize schedules[0] from them. The smoke test and
-        // any caller that already provides `schedules` is unaffected.
-        if (
-            empty($post['schedules'])
-            && !empty($post['quick_dows'])
-            && !empty($post['quick_time'])
-        ) {
-            $cron = Validators::compileQuickRecurringCron(
-                (array) $post['quick_dows'],
-                (string) $post['quick_time']
-            );
-            $post['schedules'] = [['type' => 'recurring', 'cron_expr' => $cron]];
+        // Form mode: compile $post['schedule'] (singular, frequency-based) into
+        // a single schedules[] row. Programmatic callers (smoke test, etc.) can
+        // still pass `schedules` directly and bypass this.
+        if (empty($post['schedules']) && !empty($post['schedule']) && is_array($post['schedule'])) {
+            $compiled = Validators::compileSchedule($post['schedule']);
+            $post['schedules'] = [$compiled];
         }
 
         $id              = isset($post['id']) && $post['id'] !== '' ? (int) $post['id'] : null;
@@ -300,7 +303,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         }
         if ($dup->fetchColumn()) {
             throw new \InvalidArgumentException(
-                sprintf(_('A job named "%s" already exists'), $name)
+                sprintf(_('A schedule named "%s" already exists'), $name)
             );
         }
 
@@ -315,7 +318,12 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             $type = (string) ($sched['type'] ?? '');
             Validators::validateScheduleType($type);
             if ($type === 'recurring' || $type === 'cron') {
-                Validators::validateCron((string) ($sched['cron_expr'] ?? ''));
+                $expr = (string) ($sched['cron_expr'] ?? '');
+                // @nth: is our internal "Nth weekday of month" format — already
+                // validated by compileSchedule, but doesn't parse as cron.
+                if (strncmp($expr, '@nth:', 5) !== 0) {
+                    Validators::validateCron($expr);
+                }
             }
         }
 
@@ -477,13 +485,24 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         foreach ($job['schedules'] as $sched) {
             try {
                 $type = (string) ($sched['type'] ?? '');
-                if (($type === 'recurring' || $type === 'cron') && !empty($sched['cron_expr'])) {
-                    $expr = new \Cron\CronExpression((string) $sched['cron_expr']);
-                    // getNextRunDate returns a DateTime in the requested tz.
-                    $next = $expr->getNextRunDate('now', 0, false, $tzName);
-                    $next->setTimezone(new \DateTimeZone('UTC'));
-                    if ($next > $nowUtc) {
-                        $candidates[] = $next;
+                $expr = (string) ($sched['cron_expr'] ?? '');
+
+                if (($type === 'recurring' || $type === 'cron') && $expr !== '') {
+                    if (strncmp($expr, '@nth:', 5) === 0) {
+                        $next = self::nextNthOccurrence(
+                            $expr,
+                            new \DateTime('now', new \DateTimeZone($tzName))
+                        );
+                    } else {
+                        // Standard 5-field cron via the bundled CronExpression.
+                        $cron = new \Cron\CronExpression($expr);
+                        $next = $cron->getNextRunDate('now', 0, false, $tzName);
+                    }
+                    if ($next instanceof \DateTime) {
+                        $next->setTimezone(new \DateTimeZone('UTC'));
+                        if ($next > $nowUtc) {
+                            $candidates[] = $next;
+                        }
                     }
                 } elseif ($type === 'oneoff' && !empty($sched['start_dt'])) {
                     // start_dt stored as a wall-clock string; interpret in job tz.
@@ -521,30 +540,99 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     }
 
     /**
-     * Compute the next $count fire times for a Quick-Recurring DOW + time
-     * input (used by the form's AJAX preview). Returns formatted datetime
-     * strings in the supplied timezone.
+     * Compute the next $count fire times for a Schedule-tab form post. Used
+     * by the AJAX preview. Returns formatted datetime strings in the supplied
+     * timezone, plus the compiled schedule shape for transparency.
      *
-     * @param array<int,string> $dows
-     * @return array{cron:string,times:array<int,string>}
+     * @param array<string,mixed> $sched form values from Schedule tab
+     * @return array{compiled:array,times:array<int,string>}
      */
-    public function previewQuickRecurring(array $dows, string $time, string $tz, int $count = 5)
+    public function previewSchedule(array $sched, string $tz, int $count = 5)
     {
-        $cron  = Validators::compileQuickRecurringCron($dows, $time);
-        $tzObj = new \DateTimeZone($tz);
-        $expr  = new \Cron\CronExpression($cron);
+        $compiled = Validators::compileSchedule($sched);
+        $tzObj    = new \DateTimeZone($tz);
+        $times    = [];
 
-        $times = [];
-        $cursor = 'now';
-        for ($i = 0; $i < $count; $i++) {
-            $dt = $expr->getNextRunDate($cursor, 0, false, $tz);
+        if ($compiled['type'] === 'oneoff') {
+            $dt = new \DateTime((string) $compiled['start_dt'], $tzObj);
             $times[] = $dt->format('Y-m-d H:i') . ' ' . $tzObj->getName();
-            // For the next iteration, advance one second past this firing so
-            // we get the *following* match.
-            $cursor = $dt->modify('+1 second');
+        } elseif (
+            isset($compiled['cron_expr'])
+            && strncmp((string) $compiled['cron_expr'], '@nth:', 5) === 0
+        ) {
+            $cursor = new \DateTime('now', $tzObj);
+            for ($i = 0; $i < $count; $i++) {
+                $next = self::nextNthOccurrence((string) $compiled['cron_expr'], $cursor);
+                if (!$next instanceof \DateTime) {
+                    break;
+                }
+                $times[] = $next->format('Y-m-d H:i') . ' ' . $tzObj->getName();
+                $cursor = clone $next;
+                $cursor->modify('+1 minute');
+            }
+        } else {
+            $expr   = new \Cron\CronExpression((string) $compiled['cron_expr']);
+            $cursor = 'now';
+            for ($i = 0; $i < $count; $i++) {
+                $dt = $expr->getNextRunDate($cursor, 0, false, $tz);
+                $times[] = $dt->format('Y-m-d H:i') . ' ' . $tzObj->getName();
+                $cursor = $dt->modify('+1 second');
+            }
         }
 
-        return ['cron' => $cron, 'times' => $times];
+        return ['compiled' => $compiled, 'times' => $times];
+    }
+
+    /**
+     * Resolve a `@nth:<ordinal>:<dow>:<HH>:<MM>` schedule expression into the
+     * next firing strictly after $after, in $after's timezone. Returns null if
+     * we somehow can't find an occurrence within the next 24 months (which
+     * shouldn't happen for valid input).
+     *
+     * @return \DateTime|null in $after's timezone
+     */
+    private static function nextNthOccurrence(string $expr, \DateTime $after)
+    {
+        if (!preg_match('/^@nth:([1-4L]):(\d):(\d{2}):(\d{2})$/', $expr, $m)) {
+            return null;
+        }
+        $ord   = $m[1];
+        $dow   = (int) $m[2];
+        $hour  = (int) $m[3];
+        $min   = (int) $m[4];
+        $tz    = $after->getTimezone();
+        $names = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+        $dowName = $names[$dow] ?? 'sunday';
+
+        $cursor = clone $after;
+        for ($i = 0; $i < 24; $i++) {
+            $year     = (int) $cursor->format('Y');
+            $month    = (int) $cursor->format('n');
+            $monthStr = sprintf('%04d-%02d', $year, $month);
+
+            if ($ord === 'L') {
+                $dt = new \DateTime("last $dowName of $monthStr", $tz);
+            } else {
+                $dt = new \DateTime("first $dowName of $monthStr", $tz);
+                $weeksToAdd = (int) $ord - 1;
+                if ($weeksToAdd > 0) {
+                    $dt->modify('+' . $weeksToAdd . ' weeks');
+                    // 5th-week scenarios that fall outside the month — skip.
+                    if ((int) $dt->format('n') !== $month) {
+                        $cursor->modify('first day of next month');
+                        $cursor->setTime(0, 0);
+                        continue;
+                    }
+                }
+            }
+            $dt->setTime($hour, $min);
+            if ($dt > $after) {
+                return $dt;
+            }
+            $cursor->modify('first day of next month');
+            $cursor->setTime(0, 0);
+        }
+        return null;
     }
 
     // =====================================================================
@@ -556,7 +644,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
      */
     public function ajaxRequest($req, &$setting)
     {
-        $allowed = ['preview-quick-recurring'];
+        $allowed = ['preview-schedule'];
         return in_array($req, $allowed, true);
     }
 
@@ -567,18 +655,30 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     public function ajaxHandler()
     {
         $command = $_REQUEST['command'] ?? '';
-        if ($command !== 'preview-quick-recurring') {
+        if ($command !== 'preview-schedule') {
             return ['status' => false, 'message' => 'Unknown command'];
         }
 
         try {
-            $dows = isset($_REQUEST['dows']) ? (array) $_REQUEST['dows'] : [];
-            $time = (string) ($_REQUEST['time'] ?? '');
-            $tz   = (string) ($_REQUEST['tz']   ?? 'UTC');
-            return ['status' => true] + $this->previewQuickRecurring($dows, $time, $tz, 5);
+            $sched = isset($_REQUEST['schedule']) && is_array($_REQUEST['schedule'])
+                ? $_REQUEST['schedule'] : [];
+            $tz    = (string) ($_REQUEST['tz'] ?? 'UTC');
+            return ['status' => true] + $this->previewSchedule($sched, $tz, 5);
         } catch (\Throwable $e) {
             return ['status' => false, 'message' => $e->getMessage()];
         }
+    }
+
+    /**
+     * Internal extensions known to FreePBX, for the participant picker.
+     *
+     * @return array<int,array{extension:string, name:string}>
+     */
+    public function listExtensions()
+    {
+        $stmt = $this->db->prepare("SELECT extension, name FROM users ORDER BY extension");
+        $stmt->execute();
+        return $stmt->fetchAll(\PDO::FETCH_ASSOC);
     }
 
     /**
@@ -605,24 +705,15 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         $policy        = (string) ($opt['concurrency_policy'] ?? 'skip_if_active');
         $confExten     = (string) ($job['conference_exten'] ?? '');
 
-        // Phase 1 concurrency check is best-effort. Asterisk doesn't expose a
-        // simple "is room X occupied" via DB, so we read meetme.users (a hint;
-        // not always live) and treat non-zero as "active". Future phases can
-        // upgrade this to ConfBridgeList AMI introspection.
+        // Per-participant filter: under skip_if_active (the default), don't
+        // dial anyone who is already in the conference room. force_new bypasses
+        // this and rings every participant. The active set is queried via AMI
+        // `Command: confbridge list <exten>` and parsed in pure PHP (testable).
+        $activeIds = [];
         if ($policy === 'skip_if_active' && $confExten !== '') {
-            $stmt = $this->db->prepare("SELECT users FROM meetme WHERE exten = :e LIMIT 1");
-            $stmt->execute([':e' => $confExten]);
-            $row = $stmt->fetch(\PDO::FETCH_ASSOC);
-            if ($row && (int) $row['users'] > 0) {
-                $this->writeHistory(
-                    $jobId,
-                    'skipped',
-                    [],
-                    sprintf(_('Conference %s is active (skip_if_active)'), $confExten)
-                );
-                $this->recomputeNextFire($jobId);
-                return false;
-            }
+            $activeIds = $this->activeOverride !== null
+                ? $this->activeOverride
+                : $this->getActiveConferenceParticipants($confExten);
         }
 
         $participants = is_array($job['participants'] ?? null) ? $job['participants'] : [];
@@ -676,6 +767,21 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             }
             $channel = "Local/{$value}@from-internal/n";
 
+            $legOutcome = [
+                'kind'         => $p['kind']         ?? null,
+                'value'        => $value,
+                'display_name' => $p['display_name'] ?? null,
+                'channel'      => $channel,
+            ];
+
+            // Skip-if-active: don't ring participants already in the room.
+            if ($activeIds && Validators::isValueInActiveSet($value, $activeIds)) {
+                $legOutcome['response'] = 'Skipped';
+                $legOutcome['message']  = _('Already in conference');
+                $results[] = $legOutcome;
+                continue;
+            }
+
             // AMI Variable joins multiple key=value pairs with literal commas;
             // recipient-side Asterisk splits on comma so values cannot contain
             // commas. Our variables don't.
@@ -699,12 +805,6 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
                 $params['CallerID'] = $callerid;
             }
 
-            $legOutcome = [
-                'kind'         => $p['kind']         ?? null,
-                'value'        => $value,
-                'display_name' => $p['display_name'] ?? null,
-                'channel'      => $channel,
-            ];
             try {
                 $resp = $astman->Originate($params);
                 $legOutcome['response'] = (string) ($resp['Response'] ?? '?');
@@ -716,18 +816,33 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             $results[] = $legOutcome;
         }
 
-        $successCount = count(array_filter(
-            $results,
-            function ($r) {
-                return ($r['response'] ?? null) === 'Success';
+        // Status semantics with three leg outcomes (Success / Skipped / Error):
+        //   - all skipped (everyone already in)             → 'skipped'
+        //   - success + skipped, no errors                  → 'success'
+        //   - some success, no skips                        → 'success' (all-success)
+        //   - mix of success and error                      → 'partial'
+        //   - only errors                                   → 'failed'
+        $total   = count($results);
+        $success = 0;
+        $skipped = 0;
+        $error   = 0;
+        foreach ($results as $r) {
+            $resp = $r['response'] ?? '';
+            if ($resp === 'Success') {
+                $success++;
+            } elseif ($resp === 'Skipped') {
+                $skipped++;
+            } else {
+                $error++;
             }
-        ));
-        $total = count($results);
+        }
         if ($total === 0) {
             $status = 'failed';
-        } elseif ($successCount === $total) {
+        } elseif ($skipped === $total) {
+            $status = 'skipped';
+        } elseif ($error === 0) {
             $status = 'success';
-        } elseif ($successCount === 0) {
+        } elseif ($success === 0 && $skipped === 0) {
             $status = 'failed';
         } else {
             $status = 'partial';
@@ -737,6 +852,48 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         $this->recomputeNextFire($jobId);
 
         return $status !== 'failed';
+    }
+
+    /**
+     * Query Asterisk via AMI for the current members of the named conference
+     * room and return a list of identifiers (channel suffixes / CallerID
+     * numbers). Returns [] on any failure — the safe default is "we don't
+     * know who's in there" → don't filter anyone out.
+     *
+     * @return array<int,string>
+     */
+    private function getActiveConferenceParticipants(string $exten): array
+    {
+        $astman = $this->freepbx->astman ?? null;
+        if (!$astman || $exten === '') {
+            return [];
+        }
+        // Defensive: only allow alnum/underscore/dash in the exten we shell
+        // through to the manager, even though the field has its own validation.
+        if (!preg_match('/^[A-Za-z0-9_-]+$/', $exten)) {
+            return [];
+        }
+
+        try {
+            $resp = $astman->send_request('Command', ['Command' => 'confbridge list ' . $exten]);
+        } catch (\Throwable $e) {
+            return [];
+        }
+
+        // phpasmanager's send_request returns the response with the multi-line
+        // CLI output collected under different keys depending on version.
+        $output = '';
+        foreach (['data', 'Output', 'output'] as $key) {
+            if (!empty($resp[$key]) && is_string($resp[$key])) {
+                $output = $resp[$key];
+                break;
+            }
+        }
+        if ($output === '') {
+            return [];
+        }
+
+        return Validators::parseConfbridgeList($output);
     }
 
     /**
