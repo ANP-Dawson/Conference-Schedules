@@ -15,5 +15,9 @@ Thumbs.db
 # Build artifacts
 *.tar.gz
 
+# Locally generated FreePBX module signature — see tools/sign-module.php.
+# Tied to the host's GPG key; not portable across installs.
+module.sig
+
 # IMPORTANT: do NOT ignore vendor/ — FreePBX modules ship vendor in-tree.
 # IMPORTANT: do NOT ignore composer.lock — pin runtime deps for reproducible installs.

@@ -70,6 +70,38 @@ sudo fwconsole ma uninstall conferenceschedules
 
 This drops the five `conferenceschedules_*` tables and removes the per-minute cron line.
 
+## Suppressing the "Unsigned Module" dashboard warning
+
+By default FreePBX flags any module not signed by Sangoma's GPG key with an
+"Unsigned Module(s)" dashboard notification. Community modules (this one included)
+won't carry that signature. To clear the warning, sign the installed copy with
+a local GPG key:
+
+```bash
+# One-time: generate a passphrase-less signing key for the asterisk user
+cat > /tmp/keygen.txt <<'EOF'
+%no-protection
+Key-Type: RSA
+Key-Length: 4096
+Key-Usage: sign
+Name-Real: Conference Schedules Local
+Name-Email: noreply@your-domain.local
+Expire-Date: 0
+%commit
+EOF
+sudo -u asterisk gpg --batch --gen-key /tmp/keygen.txt
+rm /tmp/keygen.txt
+
+# Sign — re-run after every module update / `composer install`
+cd /var/www/html/admin/modules/conferenceschedules
+sudo -u asterisk php tools/sign-module.php
+sudo fwconsole notifications --delete freepbx FW_UNSIGNED
+sudo fwconsole reload
+```
+
+`module.sig` is host-specific (tied to your GPG key) and is `.gitignore`d. Each
+installation signs its own copy.
+
 ## Required AMI permissions
 
 `Originate` requires the FreePBX manager user to have the `originate` write permission
