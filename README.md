@@ -41,81 +41,49 @@ schedules.
 
 ## Install
 
-### Debian / Ubuntu (vanilla FreePBX)
+### Debian / Ubuntu (FreePBX 16/17)
 
 ```bash
 cd /var/www/html/admin/modules
 sudo git clone https://github.com/ANP-Dawson/Conference-Schedules.git conferenceschedules
 sudo chown -R asterisk:asterisk conferenceschedules
-
-cd conferenceschedules
-sudo -u asterisk composer install --no-dev
-
 sudo fwconsole ma install conferenceschedules
 sudo fwconsole reload
 ```
 
-### PBXact / Sangoma Linux / CentOS
+That's the whole install. The module ships its `vendor/` directory in-tree,
+so no `composer install` step is needed at runtime.
 
-PBXact ships on a CentOS-derived Sangoma Linux base with SELinux usually
-enforcing and without Composer pre-installed. **PBXact 15 also defaults
-to PHP 5.6**; if `php --version` reports 5.x on your box, first install
-PHP 7.4 from Sangoma's repos and switch FreePBX over to it:
+### PBXact / Sangoma Linux / CentOS (FreePBX 15+)
+
+PBXact 15 defaults to PHP 5.6, but this module requires PHP 7.0+. If
+`php --version` reports 5.x, switch FreePBX to PHP 7.4 first:
 
 ```bash
 sudo yum install -y php74-sng-{cli,common,gd,intl,json,mbstring,mysqlnd,opcache,pdo,xml,zip}
-# Sangoma ships a CLI helper for the actual switch (look for
-# `sng-php-cli-switcher` or `pbx-php-switcher`); if not present,
-# point /usr/bin/php at the new interpreter via `alternatives`:
 sudo alternatives --install /usr/bin/php php /usr/bin/php74 100
 sudo alternatives --set php /usr/bin/php74
-# Restart Apache so the FreePBX web context picks up PHP 7.4:
 sudo systemctl restart httpd
 php --version   # should now report 7.4.x
 ```
 
-Once PHP 7.4 is the active interpreter:
+Then install the module:
 
 ```bash
-# 1. Prerequisites — git only; PHP and unzip are already part of any
-#    FreePBX install. (Do NOT install `php-cli` here — Sangoma's php56w /
-#    php74-sng packages will conflict with stock php-cli and fail the
-#    entire transaction.)
 sudo yum install -y git
-
-# 2. Composer (skip this step if /usr/local/bin/composer already exists)
-curl -sS https://getcomposer.org/installer | sudo php -- \
-    --install-dir=/usr/local/bin --filename=composer
-
-# 3. Clone the module into FreePBX's modules directory
 cd /var/www/html/admin/modules
 sudo git clone https://github.com/ANP-Dawson/Conference-Schedules.git conferenceschedules
 sudo chown -R asterisk:asterisk conferenceschedules
-
-# 4. Install runtime dependencies (use the explicit path — `sudo -u asterisk`
-#    strips PATH and won't find /usr/local/bin/composer otherwise)
-cd conferenceschedules
-sudo -u asterisk /usr/local/bin/composer install --no-dev
-
-# 5. Restore SELinux contexts so Apache can serve the new files
-sudo restorecon -Rv /var/www/html/admin/modules/conferenceschedules
-
-# 6. Register with FreePBX, fix any ownership drift, and reload
+sudo restorecon -Rv /var/www/html/admin/modules/conferenceschedules 2>/dev/null || true
 sudo fwconsole ma install conferenceschedules
 sudo fwconsole chown
 sudo fwconsole reload
 ```
 
-The extra `fwconsole chown` step cleans up any file ownership the `git clone`
-may have set incorrectly — PBXact is strict about permissions under
-`/var/www/html`. If `restorecon` is unavailable (SELinux disabled), skip
-step 5.
-
-> **PHP version note**: this module requires **PHP 7.4 or newer**. Older
-> PBXact releases (PBXact 14 and earlier) ship PHP 5.6 (`php56w-*`
-> packages) and won't get past `composer install` — you'll see a message
-> like "*Your PHP version (5.6.x) does not satisfy that requirement*".
-> Upgrade to PBXact 16 / FreePBX 16+ first.
+`fwconsole chown` cleans up any file ownership the `git clone` got wrong
+— PBXact is strict about permissions under `/var/www/html`.
+`restorecon` only matters if SELinux is enforcing; the `|| true` makes
+the command harmless on systems where SELinux isn't installed.
 
 ### After install
 
