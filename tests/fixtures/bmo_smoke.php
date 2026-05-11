@@ -176,6 +176,53 @@ try {
     ok('non-digit extension rejected', strpos($e->getMessage(), 'digits only') !== false);
 }
 
+// --- owner_user_id scoping (UCP) ---------------------------------------------
+// User A creates a schedule; User B should not be able to see / edit / delete /
+// fire it. saveJob with $ownerUserId set must scope updates too.
+$userA = 9001;
+$userB = 9002;
+
+$ownedId = $mod->saveJob([
+    'name'             => 'BMO Owned-By-A',
+    'conference_exten' => $confExten,
+    'enabled'          => 1,
+    'timezone'         => 'UTC',
+    'schedules'        => [],
+    'participants'     => [],
+], $userA);
+ok('saveJob with $ownerUserId returns id', is_int($ownedId) && $ownedId > 0);
+
+$asA = $mod->getJob($ownedId, $userA);
+ok('user A can read their own schedule', is_array($asA) && (int) ($asA['owner_user_id'] ?? 0) === $userA);
+
+$asB = $mod->getJob($ownedId, $userB);
+ok('user B cannot read user A\'s schedule', $asB === null);
+
+$listA = $mod->listJobs($userA);
+ok('listJobs scoped to user A includes owned schedule',
+    (bool) array_filter($listA, fn($r) => (int) $r['id'] === $ownedId));
+
+$listB = $mod->listJobs($userB);
+ok('listJobs scoped to user B excludes user A\'s schedule',
+    !array_filter($listB, fn($r) => (int) $r['id'] === $ownedId));
+
+try {
+    $mod->saveJob([
+        'id'               => $ownedId,
+        'name'             => 'BMO Owned-By-A (hijacked)',
+        'conference_exten' => $confExten,
+        'timezone'         => 'UTC',
+    ], $userB);
+    ok('user B cannot update user A\'s schedule', false);
+} catch (InvalidArgumentException $e) {
+    ok('user B cannot update user A\'s schedule', strpos($e->getMessage(), 'not owned') !== false);
+}
+
+ok('user B cannot delete user A\'s schedule', $mod->deleteJob($ownedId, $userB) === false);
+ok('user A schedule still exists after B\'s delete attempt', $mod->getJob($ownedId, $userA) !== null);
+
+ok('user A can delete own schedule', $mod->deleteJob($ownedId, $userA) === true);
+
 // --- recomputeNextFire (called as part of saveJob) ---------------------------
 $got2 = $mod->getJob($id);
 // $got2 is the post-update job; we replaced schedules with [] in the update.

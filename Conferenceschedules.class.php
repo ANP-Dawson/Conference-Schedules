@@ -168,46 +168,63 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     }
 
     /**
-     * All jobs joined with their conference description and most recent
-     * history status — single query, suitable for the jobs list view.
+     * All schedules joined with their conference description and most recent
+     * history status. When $ownerUserId is non-null, scope to schedules owned
+     * by that UCP user — used by the UCP widget. Pass null to see everything
+     * (admin behavior).
      *
+     * @param int|null $ownerUserId
      * @return array<int,array<string,mixed>>
      */
-    public function listJobs()
+    public function listJobs($ownerUserId = null)
     {
         $sql = "SELECT j.id, j.name, j.description, j.conference_exten,
                        m.description AS conference_description,
                        j.enabled, j.timezone, j.next_fire_utc, j.last_fire_utc,
+                       j.owner_user_id,
                        (SELECT h.status FROM conferenceschedules_history h
                           WHERE h.job_id = j.id
                           ORDER BY h.fired_at_utc DESC LIMIT 1) AS last_status
                   FROM conferenceschedules_jobs j
-                  LEFT JOIN meetme m ON m.exten = j.conference_exten
-                 ORDER BY j.name";
+                  LEFT JOIN meetme m ON m.exten = j.conference_exten";
+        $params = [];
+        if ($ownerUserId !== null) {
+            $sql .= " WHERE j.owner_user_id = :uid";
+            $params[':uid'] = (int) $ownerUserId;
+        }
+        $sql .= " ORDER BY j.name";
+
         $stmt = $this->db->prepare($sql);
-        $stmt->execute();
+        $stmt->execute($params);
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
     /**
      * Hydrated job record with its options, schedules, and participants.
+     * When $ownerUserId is non-null, returns null unless the schedule belongs
+     * to that user.
      *
      * @return array<string,mixed>|null
      */
-    public function getJob($id)
+    public function getJob($id, $ownerUserId = null)
     {
         $jobId = (int) $id;
         if ($jobId <= 0) {
             return null;
         }
 
-        $stmt = $this->db->prepare(
-            "SELECT j.*, m.description AS conference_description
-               FROM conferenceschedules_jobs j
-               LEFT JOIN meetme m ON m.exten = j.conference_exten
-              WHERE j.id = :id"
-        );
-        $stmt->execute([':id' => $jobId]);
+        $sql = "SELECT j.*, m.description AS conference_description
+                  FROM conferenceschedules_jobs j
+                  LEFT JOIN meetme m ON m.exten = j.conference_exten
+                 WHERE j.id = :id";
+        $params = [':id' => $jobId];
+        if ($ownerUserId !== null) {
+            $sql .= " AND j.owner_user_id = :uid";
+            $params[':uid'] = (int) $ownerUserId;
+        }
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
         $job = $stmt->fetch(PDO::FETCH_ASSOC);
         if (!$job) {
             return null;
@@ -258,7 +275,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
      * @throws \InvalidArgumentException on validation failure
      * @throws \Exception on DB failure (transaction rolled back)
      */
-    public function saveJob(array $post)
+    public function saveJob(array $post, $ownerUserId = null)
     {
         // Form mode: compile $post['schedule'] (singular, frequency-based) into
         // a single schedules[] row. Programmatic callers (smoke test, etc.) can
@@ -274,6 +291,28 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         $conferenceExten = trim((string) ($post['conference_exten'] ?? ''));
         $enabled         = !empty($post['enabled']) ? 1 : 0;
         $timezone        = trim((string) ($post['timezone'] ?? 'UTC'));
+
+        // Owner resolution: UCP scope ($ownerUserId !== null) forces the owner
+        // and verifies update ownership. Admin scope (null) takes owner from
+        // $post['owner_user_id'] or leaves it null.
+        if ($ownerUserId !== null) {
+            $ownerForInsert = (int) $ownerUserId;
+            if ($id !== null) {
+                $check = $this->db->prepare(
+                    "SELECT id FROM conferenceschedules_jobs
+                      WHERE id = :id AND owner_user_id = :uid LIMIT 1"
+                );
+                $check->execute([':id' => $id, ':uid' => (int) $ownerUserId]);
+                if (!$check->fetchColumn()) {
+                    throw new \InvalidArgumentException(
+                        _('Schedule not found or not owned by you')
+                    );
+                }
+            }
+        } else {
+            $ownerForInsert = isset($post['owner_user_id']) && $post['owner_user_id'] !== ''
+                ? (int) $post['owner_user_id'] : null;
+        }
 
         Validators::validateName($name);
         Validators::validateConferenceExten($conferenceExten);
@@ -339,8 +378,8 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             if ($id === null) {
                 $ins = $this->db->prepare(
                     "INSERT INTO conferenceschedules_jobs
-                        (name, description, conference_exten, enabled, timezone)
-                     VALUES (:n, :d, :e, :en, :tz)"
+                        (name, description, conference_exten, enabled, timezone, owner_user_id)
+                     VALUES (:n, :d, :e, :en, :tz, :ow)"
                 );
                 $ins->execute([
                     ':n'  => $name,
@@ -348,13 +387,31 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
                     ':e'  => $conferenceExten,
                     ':en' => $enabled,
                     ':tz' => $timezone,
+                    ':ow' => $ownerForInsert,
                 ]);
                 $id = (int) $this->db->lastInsertId();
-            } else {
+            } elseif ($ownerUserId !== null) {
+                // UCP user: don't allow changing owner.
                 $upd = $this->db->prepare(
                     "UPDATE conferenceschedules_jobs
                         SET name = :n, description = :d, conference_exten = :e,
                             enabled = :en, timezone = :tz
+                      WHERE id = :id AND owner_user_id = :uid"
+                );
+                $upd->execute([
+                    ':n'  => $name,
+                    ':d'  => $description !== '' ? $description : null,
+                    ':e'  => $conferenceExten,
+                    ':en' => $enabled,
+                    ':tz' => $timezone,
+                    ':id' => $id,
+                    ':uid' => (int) $ownerUserId,
+                ]);
+            } else {
+                $upd = $this->db->prepare(
+                    "UPDATE conferenceschedules_jobs
+                        SET name = :n, description = :d, conference_exten = :e,
+                            enabled = :en, timezone = :tz, owner_user_id = :ow
                       WHERE id = :id"
                 );
                 $upd->execute([
@@ -363,6 +420,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
                     ':e'  => $conferenceExten,
                     ':en' => $enabled,
                     ':tz' => $timezone,
+                    ':ow' => $ownerForInsert,
                     ':id' => $id,
                 ]);
             }
@@ -441,15 +499,23 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
 
     /**
      * Delete a job. FK ON DELETE CASCADE handles options/schedules/participants/history.
+     * When $ownerUserId is non-null, scopes the delete to that user's schedules
+     * (so a UCP user can't delete someone else's schedule).
      */
-    public function deleteJob($id)
+    public function deleteJob($id, $ownerUserId = null)
     {
         $jobId = (int) $id;
         if ($jobId <= 0) {
             return false;
         }
-        $stmt = $this->db->prepare("DELETE FROM conferenceschedules_jobs WHERE id = :id");
-        $stmt->execute([':id' => $jobId]);
+        $sql = "DELETE FROM conferenceschedules_jobs WHERE id = :id";
+        $params = [':id' => $jobId];
+        if ($ownerUserId !== null) {
+            $sql .= " AND owner_user_id = :uid";
+            $params[':uid'] = (int) $ownerUserId;
+        }
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
         return $stmt->rowCount() > 0;
     }
 
@@ -553,9 +619,17 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         $tzObj    = new \DateTimeZone($tz);
         $times    = [];
 
+        // Format each preview time with the tz abbreviation that applies at
+        // THAT moment — so users see "CDT" for May and "CST" for December
+        // instead of just "America/Chicago" everywhere. This is the easiest
+        // way to surface DST handling without confusing the user.
+        $fmt = function (\DateTime $dt) {
+            return $dt->format('Y-m-d H:i T');
+        };
+
         if ($compiled['type'] === 'oneoff') {
             $dt = new \DateTime((string) $compiled['start_dt'], $tzObj);
-            $times[] = $dt->format('Y-m-d H:i') . ' ' . $tzObj->getName();
+            $times[] = $fmt($dt);
         } elseif (
             isset($compiled['cron_expr'])
             && strncmp((string) $compiled['cron_expr'], '@nth:', 5) === 0
@@ -566,7 +640,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
                 if (!$next instanceof \DateTime) {
                     break;
                 }
-                $times[] = $next->format('Y-m-d H:i') . ' ' . $tzObj->getName();
+                $times[] = $fmt($next);
                 $cursor = clone $next;
                 $cursor->modify('+1 minute');
             }
@@ -575,7 +649,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             $cursor = 'now';
             for ($i = 0; $i < $count; $i++) {
                 $dt = $expr->getNextRunDate($cursor, 0, false, $tz);
-                $times[] = $dt->format('Y-m-d H:i') . ' ' . $tzObj->getName();
+                $times[] = $fmt($dt);
                 $cursor = $dt->modify('+1 second');
             }
         }
@@ -688,10 +762,10 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
      *
      * Returns true if at least one leg's AMI Originate request succeeded.
      */
-    public function fireJob($id)
+    public function fireJob($id, $ownerUserId = null)
     {
         $jobId = (int) $id;
-        $job = $this->getJob($jobId);
+        $job = $this->getJob($jobId, $ownerUserId);
         if (!$job) {
             return false;
         }
@@ -962,16 +1036,25 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
      *
      * @return array<int,array<string,mixed>>
      */
-    public function listHistory($jobId = null, $limit = 100)
+    public function listHistory($jobId = null, $limit = 100, $ownerUserId = null)
     {
         $sql = "SELECT h.id, h.job_id, j.name AS job_name, h.fired_at_utc,
-                       h.status, h.participants_json, h.error_text
+                       h.status, h.participants_json, h.error_text,
+                       j.owner_user_id
                   FROM conferenceschedules_history h
                   LEFT JOIN conferenceschedules_jobs j ON j.id = h.job_id";
         $params = [];
+        $where = [];
         if ($jobId !== null) {
-            $sql .= " WHERE h.job_id = :j";
+            $where[] = "h.job_id = :j";
             $params[':j'] = (int) $jobId;
+        }
+        if ($ownerUserId !== null) {
+            $where[] = "j.owner_user_id = :uid";
+            $params[':uid'] = (int) $ownerUserId;
+        }
+        if ($where) {
+            $sql .= " WHERE " . implode(' AND ', $where);
         }
         $sql .= " ORDER BY h.fired_at_utc DESC LIMIT " . max(1, min((int) $limit, 1000));
 

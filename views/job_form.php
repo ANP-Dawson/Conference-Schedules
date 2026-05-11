@@ -128,6 +128,12 @@ $help = function (string $text): string {
             </option>
           <?php endforeach; ?>
         </select>
+        <p class="help-block">
+          <?php echo _('Daylight Saving Time is handled automatically — schedules fire at the same wall-clock time year-round in the chosen zone (e.g. 10:00 AM is still 10:00 AM after the spring forward / fall back). To use a zone that never observes DST, pick a fixed-offset zone like '); ?>
+          <code>America/Regina</code>
+          <?php echo _(' (CST year-round) or '); ?>
+          <code>Etc/GMT+6</code>.
+        </p>
       </div>
 
       <div class="form-group">

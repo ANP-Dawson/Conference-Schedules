@@ -1,0 +1,64 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+
+.cs-widget .cs-toolbar {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.cs-widget .cs-toolbar .btn {
+    margin-right: 4px;
+}
+
+.cs-widget .cs-tabs {
+    margin-bottom: 12px;
+}
+
+.cs-widget .cs-table th,
+.cs-widget .cs-history-table th {
+    white-space: nowrap;
+}
+
+.cs-widget .cs-table tbody tr td {
+    vertical-align: middle;
+}
+
+.cs-modal .modal-body {
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.cs-modal .cs-form-tabs {
+    padding-top: 16px;
+}
+
+.cs-modal .cs-sched-section {
+    padding-left: 12px;
+    border-left: 3px solid #eee;
+    margin-bottom: 12px;
+}
+
+.cs-modal .cs-fire-preview ul {
+    margin-bottom: 0;
+    padding-left: 20px;
+}
+
+.cs-modal .cs-help {
+    margin-left: 4px;
+    cursor: help;
+}
+
+.cs-modal .cs-participants tbody tr td {
+    vertical-align: middle;
+}
+
+.cs-modal .cs-drag-handle:hover {
+    color: #555 !important;
+}
+
+.cs-modal .cs-participants tbody tr.ui-sortable-placeholder {
+    background: #fff8d2;
+    height: 38px;
+    border: 1px dashed #d8c97a;
+    visibility: visible !important;
+}

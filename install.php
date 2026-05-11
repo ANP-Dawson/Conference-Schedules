@@ -21,12 +21,22 @@ $pdo->query(
         `timezone` VARCHAR(64) NOT NULL DEFAULT 'UTC',
         `next_fire_utc` DATETIME NULL,
         `last_fire_utc` DATETIME NULL,
+        `owner_user_id` INT UNSIGNED NULL,
         `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         PRIMARY KEY (`id`),
         UNIQUE KEY `uniq_name` (`name`),
-        KEY `idx_due` (`enabled`, `next_fire_utc`)
+        KEY `idx_due` (`enabled`, `next_fire_utc`),
+        KEY `idx_owner` (`owner_user_id`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+
+// Migration for installs that pre-date the owner_user_id column. MariaDB 10.0.2+
+// supports IF NOT EXISTS on ALTER TABLE so this is idempotent and safe to re-run.
+$pdo->query(
+    "ALTER TABLE conferenceschedules_jobs
+        ADD COLUMN IF NOT EXISTS owner_user_id INT UNSIGNED NULL,
+        ADD KEY IF NOT EXISTS idx_owner (owner_user_id)"
 );
 
 // ---- conferenceschedules_schedules ----
@@ -107,6 +117,24 @@ if (file_exists($pubKey) && function_exists('exec')) {
     @exec('gpg --import ' . escapeshellarg($pubKey) . ' 2>&1', $gpgOut, $gpgRet);
     if (function_exists('dbug')) {
         dbug('conferenceschedules: gpg --import returned ' . (int) $gpgRet);
+    }
+}
+
+// ---- refresh UCP compiled asset bundle ----
+// UCP concatenates every module's ucp/assets/js/global.js into a single
+// /var/www/html/ucp/assets/js/compiled/modules/jsphp_<hash>.js. Without an
+// explicit regeneration, our JS / CSS edits never reach the browser. Trigger
+// the rebuild here so a freshly-installed module is usable in UCP immediately.
+if (method_exists('\\FreePBX', 'Ucp')) {
+    try {
+        $ucp = \FreePBX::Ucp();
+        if (method_exists($ucp, 'refreshAssets')) {
+            $ucp->refreshAssets();
+        }
+    } catch (\Throwable $e) {
+        if (function_exists('dbug')) {
+            dbug('conferenceschedules: UCP refreshAssets failed: ' . $e->getMessage());
+        }
     }
 }
 
