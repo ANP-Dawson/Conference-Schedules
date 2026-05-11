@@ -112,11 +112,25 @@ $pdo->query(
 // install.php runs as the asterisk user (FreePBX drops privileges), so plain
 // `gpg` targets ~asterisk/.gnupg. If gpg isn't available, we silently degrade
 // to "Unsigned" (no worse than the pre-signing baseline).
-$pubKey = __DIR__ . '/tools/signing-key.pub';
+$pubKey   = __DIR__ . '/tools/signing-key.pub';
+$ownerTrust = __DIR__ . '/tools/signing-key.ownertrust';
 if (file_exists($pubKey) && function_exists('exec')) {
     @exec('gpg --import ' . escapeshellarg($pubKey) . ' 2>&1', $gpgOut, $gpgRet);
     if (function_exists('dbug')) {
         dbug('conferenceschedules: gpg --import returned ' . (int) $gpgRet);
+    }
+    // FreePBX rejects "signed by an invalid key" when the imported public key
+    // sits at unknown trust. Push the ownertrust to ultimate so the verifier
+    // accepts the signature.
+    if (file_exists($ownerTrust)) {
+        @exec(
+            'gpg --import-ownertrust ' . escapeshellarg($ownerTrust) . ' 2>&1',
+            $trustOut,
+            $trustRet
+        );
+        if (function_exists('dbug')) {
+            dbug('conferenceschedules: gpg --import-ownertrust returned ' . (int) $trustRet);
+        }
     }
 }
 
