@@ -41,6 +41,8 @@ schedules.
 
 ## Install
 
+### Debian / Ubuntu (vanilla FreePBX)
+
 ```bash
 cd /var/www/html/admin/modules
 sudo git clone https://github.com/ANP-Dawson/Conference-Schedules.git conferenceschedules
@@ -52,6 +54,45 @@ sudo -u asterisk composer install --no-dev
 sudo fwconsole ma install conferenceschedules
 sudo fwconsole reload
 ```
+
+### PBXact / Sangoma Linux / CentOS
+
+PBXact ships on a CentOS-derived Sangoma Linux base with SELinux usually
+enforcing and without Composer pre-installed. The flow is otherwise the
+same as upstream FreePBX:
+
+```bash
+# 1. Prerequisites — install any that are missing
+sudo yum install -y git unzip php-cli
+
+# 2. Composer (skip this step if /usr/local/bin/composer already exists)
+curl -sS https://getcomposer.org/installer | sudo php -- \
+    --install-dir=/usr/local/bin --filename=composer
+
+# 3. Clone the module into FreePBX's modules directory
+cd /var/www/html/admin/modules
+sudo git clone https://github.com/ANP-Dawson/Conference-Schedules.git conferenceschedules
+sudo chown -R asterisk:asterisk conferenceschedules
+
+# 4. Install runtime dependencies
+cd conferenceschedules
+sudo -u asterisk composer install --no-dev
+
+# 5. Restore SELinux contexts so Apache can serve the new files
+sudo restorecon -Rv /var/www/html/admin/modules/conferenceschedules
+
+# 6. Register with FreePBX, fix any ownership drift, and reload
+sudo fwconsole ma install conferenceschedules
+sudo fwconsole chown
+sudo fwconsole reload
+```
+
+The extra `fwconsole chown` step cleans up any file ownership the `git clone`
+may have set incorrectly — PBXact is strict about permissions under
+`/var/www/html`. If `restorecon` is unavailable (SELinux disabled), skip
+step 5.
+
+### After install
 
 The admin GUI lives under **Applications → Conference Schedules**. The UCP
 widget shows up under **Add Widget → Conference Schedules** for any user
