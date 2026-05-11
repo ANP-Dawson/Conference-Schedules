@@ -62,8 +62,11 @@ enforcing and without Composer pre-installed. The flow is otherwise the
 same as upstream FreePBX:
 
 ```bash
-# 1. Prerequisites — install any that are missing
-sudo yum install -y git unzip php-cli
+# 1. Prerequisites — git only; PHP and unzip are already part of any
+#    FreePBX install. (Do NOT install `php-cli` here — Sangoma's php56w /
+#    php74-sng packages will conflict with stock php-cli and fail the
+#    entire transaction.)
+sudo yum install -y git
 
 # 2. Composer (skip this step if /usr/local/bin/composer already exists)
 curl -sS https://getcomposer.org/installer | sudo php -- \
@@ -91,6 +94,12 @@ The extra `fwconsole chown` step cleans up any file ownership the `git clone`
 may have set incorrectly — PBXact is strict about permissions under
 `/var/www/html`. If `restorecon` is unavailable (SELinux disabled), skip
 step 5.
+
+> **PHP version note**: this module requires **PHP 7.4 or newer**. Older
+> PBXact releases (PBXact 14 and earlier) ship PHP 5.6 (`php56w-*`
+> packages) and won't get past `composer install` — you'll see a message
+> like "*Your PHP version (5.6.x) does not satisfy that requirement*".
+> Upgrade to PBXact 16 / FreePBX 16+ first.
 
 ### After install
 
