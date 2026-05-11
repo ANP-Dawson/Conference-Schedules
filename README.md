@@ -77,9 +77,10 @@ cd /var/www/html/admin/modules
 sudo git clone https://github.com/ANP-Dawson/Conference-Schedules.git conferenceschedules
 sudo chown -R asterisk:asterisk conferenceschedules
 
-# 4. Install runtime dependencies
+# 4. Install runtime dependencies (use the explicit path — `sudo -u asterisk`
+#    strips PATH and won't find /usr/local/bin/composer otherwise)
 cd conferenceschedules
-sudo -u asterisk composer install --no-dev
+sudo -u asterisk /usr/local/bin/composer install --no-dev
 
 # 5. Restore SELinux contexts so Apache can serve the new files
 sudo restorecon -Rv /var/www/html/admin/modules/conferenceschedules
