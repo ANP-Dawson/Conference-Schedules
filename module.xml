@@ -12,8 +12,8 @@
     *0.1.0* Initial release. Recurring schedules, multiple recurrence patterns (one-off, daily, weekly, monthly by day, monthly by Nth weekday, quarterly, custom cron), participants list, AMI originate, per-participant in-room filter, per-fire history, admin GUI, UCP widget.
   </changelog>
   <depends>
-    <version>&gt;=16.0</version>
-    <module>framework ge 16.0</module>
+    <version>&gt;=15.0</version>
+    <module>framework ge 15.0</module>
     <module>conferences</module>
   </depends>
   <menuitems>

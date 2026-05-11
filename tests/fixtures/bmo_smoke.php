@@ -42,7 +42,9 @@ $db->prepare(
 $confs = $mod->listConferences();
 ok('listConferences includes our test room', (bool) array_filter(
     $confs,
-    fn($c) => ($c['exten'] ?? '') === $confExten
+    function ($c) use ($confExten) {
+        return ($c['exten'] ?? '') === $confExten;
+    }
 ));
 
 // --- saveJob: valid create ---------------------------------------------------
@@ -93,8 +95,11 @@ ok('getJob.participants has 2 sorted by sort_order',
 // --- listJobs ----------------------------------------------------------------
 $list = $mod->listJobs();
 ok('listJobs returns array', is_array($list));
-ok('listJobs includes our job', (bool) array_filter($list, fn($r) => (int) $r['id'] === $id));
-$row = current(array_filter($list, fn($r) => (int) $r['id'] === $id)) ?: [];
+$matchById = function ($r) use ($id) {
+    return (int) $r['id'] === $id;
+};
+ok('listJobs includes our job', (bool) array_filter($list, $matchById));
+$row = current(array_filter($list, $matchById)) ?: [];
 ok('listJobs row has conference_description from meetme JOIN',
     ($row['conference_description'] ?? null) === 'Integration test conference');
 
@@ -201,13 +206,17 @@ ok('user A can read their own schedule', is_array($asA) && (int) ($asA['owner_us
 $asB = $mod->getJob($ownedId, $userB);
 ok('user B cannot read user A\'s schedule', $asB === null);
 
+$matchByOwnedId = function ($r) use ($ownedId) {
+    return (int) $r['id'] === $ownedId;
+};
+
 $listA = $mod->listJobs($userA);
 ok('listJobs scoped to user A includes owned schedule',
-    (bool) array_filter($listA, fn($r) => (int) $r['id'] === $ownedId));
+    (bool) array_filter($listA, $matchByOwnedId));
 
 $listB = $mod->listJobs($userB);
 ok('listJobs scoped to user B excludes user A\'s schedule',
-    !array_filter($listB, fn($r) => (int) $r['id'] === $ownedId));
+    !array_filter($listB, $matchByOwnedId));
 
 try {
     $mod->saveJob([
@@ -264,7 +273,9 @@ $preview = $mod->previewSchedule(
 );
 ok('previewSchedule weekly returned 5 times', count($preview['times'] ?? []) === 5);
 ok('previewSchedule weekly all times contain 10:00',
-    count(array_filter($preview['times'], fn($t) => strpos($t, '10:00') !== false)) === 5);
+    count(array_filter($preview['times'], function ($t) {
+        return strpos($t, '10:00') !== false;
+    })) === 5);
 ok('previewSchedule weekly compiled to standard cron',
     ($preview['compiled']['cron_expr'] ?? null) === '0 10 * * 2');
 
@@ -385,7 +396,9 @@ $pj = json_decode($row['participants_json'] ?? '[]', true) ?: [];
 ok('history participants_json is parseable array', is_array($pj));
 ok('history participants_json has 2 legs', count($pj) === 2);
 ok('each leg has a response field',
-    is_array($pj) && count(array_filter($pj, fn($l) => isset($l['response']))) === count($pj));
+    is_array($pj) && count(array_filter($pj, function ($l) {
+        return isset($l['response']);
+    })) === count($pj));
 
 // Per-participant skip-if-active filter — use the test-only activeOverride
 // to simulate "99998 is already in the conference".
@@ -409,8 +422,12 @@ $skipHist = $mod->listHistory($skipId);
 $skipRow = $skipHist[0] ?? [];
 $skipLegs = json_decode($skipRow['participants_json'] ?? '[]', true) ?: [];
 
-$skipped99998 = current(array_filter($skipLegs, fn($l) => ($l['value'] ?? null) === '99998'));
-$dialed99997  = current(array_filter($skipLegs, fn($l) => ($l['value'] ?? null) === '99997'));
+$skipped99998 = current(array_filter($skipLegs, function ($l) {
+    return ($l['value'] ?? null) === '99998';
+}));
+$dialed99997  = current(array_filter($skipLegs, function ($l) {
+    return ($l['value'] ?? null) === '99997';
+}));
 
 ok('skip_if_active: 99998 leg recorded as Skipped',
     is_array($skipped99998) && ($skipped99998['response'] ?? null) === 'Skipped');

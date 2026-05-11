@@ -33,8 +33,8 @@ schedules.
 
 | | |
 | --- | --- |
-| FreePBX | 16 LTS, 17 |
-| PHP | 7.4+ |
+| FreePBX | 15, 16 LTS, 17 |
+| PHP | 7.2+ (7.4+ recommended) |
 | Asterisk | 18+ (`chan_pjsip` + `app_confbridge`) |
 | MariaDB / MySQL | 10.x / 5.7+ (InnoDB, utf8mb4) |
 | Conferences module | required |
@@ -58,8 +58,23 @@ sudo fwconsole reload
 ### PBXact / Sangoma Linux / CentOS
 
 PBXact ships on a CentOS-derived Sangoma Linux base with SELinux usually
-enforcing and without Composer pre-installed. The flow is otherwise the
-same as upstream FreePBX:
+enforcing and without Composer pre-installed. **PBXact 15 also defaults
+to PHP 5.6**; if `php --version` reports 5.x on your box, first install
+PHP 7.4 from Sangoma's repos and switch FreePBX over to it:
+
+```bash
+sudo yum install -y php74-sng-{cli,common,gd,intl,json,mbstring,mysqlnd,opcache,pdo,xml,zip}
+# Sangoma ships a CLI helper for the actual switch (look for
+# `sng-php-cli-switcher` or `pbx-php-switcher`); if not present,
+# point /usr/bin/php at the new interpreter via `alternatives`:
+sudo alternatives --install /usr/bin/php php /usr/bin/php74 100
+sudo alternatives --set php /usr/bin/php74
+# Restart Apache so the FreePBX web context picks up PHP 7.4:
+sudo systemctl restart httpd
+php --version   # should now report 7.4.x
+```
+
+Once PHP 7.4 is the active interpreter:
 
 ```bash
 # 1. Prerequisites — git only; PHP and unzip are already part of any
