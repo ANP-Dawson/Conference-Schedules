@@ -2,12 +2,15 @@
 
 // SPDX-License-Identifier: Apache-2.0
 //
-// Manual end-to-end smoke test for the BMO data layer. Run on the FreePBX VM:
+// End-to-end integration test for the Conference Schedules BMO. Bootstraps
+// the FreePBX framework, inserts a temporary `meetme` row, exercises every
+// public BMO method against the live database, and cleans up.
+//
+// Run on a FreePBX host:
 //   sudo -u asterisk php tests/fixtures/bmo_smoke.php
 //
-// Pre-req: at least one row in `meetme` (we insert one ourselves if needed
-// and clean it up). This is NOT part of phpunit because it depends on the
-// FreePBX framework being bootstrappable, which only the VM has.
+// Not part of PHPUnit — depends on the FreePBX framework being bootstrappable,
+// which only the host itself can provide.
 
 require_once '/etc/freepbx.conf';
 
@@ -33,7 +36,7 @@ $db->prepare("DELETE FROM meetme WHERE exten = :e")->execute([':e' => $confExten
 $db->prepare(
     "INSERT INTO meetme (exten, description, userpin, adminpin, options, music, users, language, timeout)
      VALUES (:e, :d, '', '', '', 'default', 0, 'en', 21600)"
-)->execute([':e' => $confExten, ':d' => 'BMO smoke test conf']);
+)->execute([':e' => $confExten, ':d' => 'Integration test conference']);
 
 // --- listConferences ---------------------------------------------------------
 $confs = $mod->listConferences();
@@ -47,7 +50,7 @@ $id = null;
 try {
     $id = $mod->saveJob([
         'name'             => 'BMO Smoke Test',
-        'description'      => 'created by tests/fixtures/bmo_smoke.php',
+        'description'      => 'Created by the integration test fixture',
         'conference_exten' => $confExten,
         'enabled'          => 1,
         'timezone'         => 'America/Chicago',
@@ -93,7 +96,7 @@ ok('listJobs returns array', is_array($list));
 ok('listJobs includes our job', (bool) array_filter($list, fn($r) => (int) $r['id'] === $id));
 $row = current(array_filter($list, fn($r) => (int) $r['id'] === $id)) ?: [];
 ok('listJobs row has conference_description from meetme JOIN',
-    ($row['conference_description'] ?? null) === 'BMO smoke test conf');
+    ($row['conference_description'] ?? null) === 'Integration test conference');
 
 // --- saveJob: update ---------------------------------------------------------
 try {
@@ -335,7 +338,7 @@ ok('form-mode saveJob populated next_fire_utc for @nth: schedule',
     !empty($formJob['next_fire_utc']));
 $mod->deleteJob($formId);
 
-// --- fireJob (Step 8) --------------------------------------------------------
+// --- fireJob -----------------------------------------------------------------
 // Empty participants → 'failed' history row.
 $emptyId = $mod->saveJob([
     'name'             => 'BMO Empty Job',
@@ -462,7 +465,7 @@ $mod->deleteJob($skipId);
 $mod->deleteJob($forceId);
 $mod->deleteJob($allSkipId);
 
-// --- processTick (Step 8) ----------------------------------------------------
+// --- processTick -------------------------------------------------------------
 // processTick should be a no-op when no enabled jobs are due.
 $tickReport = $mod->processTick();
 ok('processTick returns shape', isset($tickReport['count'], $tickReport['fired'], $tickReport['errors']));
@@ -482,7 +485,7 @@ $db->prepare("DELETE FROM meetme WHERE exten = :e")->execute([':e' => $confExten
 
 // --- report ------------------------------------------------------------------
 echo str_repeat('=', 60) . "\n";
-echo "BMO smoke test\n";
+echo "Conference Schedules integration test\n";
 echo str_repeat('=', 60) . "\n";
 foreach ($assertions as $a) {
     echo $a, "\n";

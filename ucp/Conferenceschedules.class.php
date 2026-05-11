@@ -2,13 +2,10 @@
 
 // SPDX-License-Identifier: Apache-2.0
 //
-// UCP-side BMO for Conference Schedules. Symlinked by FreePBX into
-// /var/www/html/ucp/modules/Conferenceschedules/ on `fwconsole reload` (the
-// symlink is created by ucp/Ucp.class.php::constructModuleConfigPages when it
-// detects this directory + class file).
-//
-// Wraps the admin-side BMO methods, enforcing per-user scoping via the
-// $ownerUserId parameter so a UCP user only sees / mutates their own schedules.
+// UCP-side widget for Conference Schedules. Wraps the admin-side BMO methods
+// with per-user scoping so a UCP user only sees and mutates their own
+// schedules. FreePBX symlinks this directory into the UCP module tree on
+// `fwconsole reload`.
 
 namespace UCP\Modules;
 

@@ -10,8 +10,9 @@ use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
 /**
- * fwconsole entry for the Conference Schedules module. Phase 1 ships
- * `conferenceschedules:tick`; future subcommands plug in via the same class.
+ * fwconsole entry point for the Conference Schedules module. Exposes
+ * `conferenceschedules:tick` — the per-minute cron command that fires
+ * schedules whose `next_fire_utc` has elapsed.
  */
 class Conferenceschedules extends Command
 {

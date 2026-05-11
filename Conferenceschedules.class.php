@@ -25,10 +25,10 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     private $db;
 
     /**
-     * Test-only override for getActiveConferenceParticipants. When set,
-     * fireJob uses this list instead of querying AMI. Lets the smoke test
-     * exercise the per-participant skip path without needing a real
-     * occupied conference room.
+     * Override for getActiveConferenceParticipants. When set, fireJob uses
+     * this list instead of querying AMI — primarily used by integration
+     * tests to exercise the per-participant skip path without needing a
+     * real occupied conference room.
      *
      * @var array<int,string>|null
      */
@@ -63,10 +63,9 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     }
 
     /**
-     * Action dispatcher. Runs before page output starts so we can use
-     * needreload() and let the page view render the resulting state.
-     * The page.conferenceschedules.php view reads `_REQUEST['cs_action']`
-     * (set here when we want to override the URL action).
+     * Action dispatcher. Runs before page output starts so save/delete/fire
+     * can call needreload() and rewrite the action so the view renders the
+     * resulting state.
      */
     public function doConfigPageInit($page)
     {
@@ -80,7 +79,7 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
             try {
                 $this->saveJob($_POST);
                 needreload();
-                // Redirect-after-POST: drop into the jobs list with a flash.
+                // Redirect-after-POST: drop into the schedules list with a flash.
                 $_REQUEST['action'] = '';
                 unset($_REQUEST['id']);
                 $_REQUEST['saved']  = 1;
@@ -100,7 +99,6 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
         }
 
         if ($action === 'fire' && $id) {
-            // Phase 1: returns false (stub). Step 8 wires real Originate calls.
             $this->fireJob($id);
             $_REQUEST['action'] = 'list';
             $_REQUEST['fired']  = $id;
@@ -278,8 +276,8 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
     public function saveJob(array $post, $ownerUserId = null)
     {
         // Form mode: compile $post['schedule'] (singular, frequency-based) into
-        // a single schedules[] row. Programmatic callers (smoke test, etc.) can
-        // still pass `schedules` directly and bypass this.
+        // a single schedules[] row. Programmatic callers can pass `schedules`
+        // directly to bypass the form-shape compilation.
         if (empty($post['schedules']) && !empty($post['schedule']) && is_array($post['schedule'])) {
             $compiled = Validators::compileSchedule($post['schedule']);
             $post['schedules'] = [$compiled];
@@ -486,7 +484,6 @@ class Conferenceschedules extends FreePBX_Helpers implements BMO
                 ]);
             }
 
-            // Step 7 fills this in. Phase 1 stub: no-op (next_fire_utc stays NULL).
             $this->recomputeNextFire($id);
 
             $this->db->commit();
