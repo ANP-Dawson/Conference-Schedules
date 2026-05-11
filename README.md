@@ -91,7 +91,29 @@ The admin GUI lives under **Applications → Conference Schedules**. The UCP
 widget shows up under **Add Widget → Conference Schedules** for any user
 with UCP access.
 
-To uninstall:
+### Updating
+
+When new commits are pushed to this repository, pull them into the
+already-installed module dir and reload FreePBX:
+
+```bash
+cd /var/www/html/admin/modules/conferenceschedules
+sudo git pull
+sudo chown -R asterisk:asterisk .
+# Re-import the shipped signing key + ownertrust. Harmless no-op if the
+# key in the repo hasn't changed; required when it has (signature would
+# fail otherwise and the dashboard would flag the module as tampered).
+sudo -u asterisk gpg --import tools/signing-key.pub
+sudo -u asterisk gpg --import-ownertrust tools/signing-key.ownertrust
+sudo fwconsole reload
+```
+
+If the update includes a schema change, `fwconsole reload` invokes the
+module's upgrade path automatically — `install.php` is idempotent and
+its `ALTER TABLE ... IF NOT EXISTS` statements add new columns without
+disturbing existing data.
+
+### Uninstall
 
 ```bash
 sudo fwconsole ma uninstall conferenceschedules
