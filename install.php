@@ -112,19 +112,41 @@ $pdo->query(
 // install.php runs as the asterisk user (FreePBX drops privileges), so plain
 // `gpg` targets ~asterisk/.gnupg. If gpg isn't available, we silently degrade
 // to "Unsigned" (no worse than the pre-signing baseline).
-$pubKey   = __DIR__ . '/tools/signing-key.pub';
+$pubKey     = __DIR__ . '/tools/signing-key.pub';
 $ownerTrust = __DIR__ . '/tools/signing-key.ownertrust';
+
 if (file_exists($pubKey) && function_exists('exec')) {
-    @exec('gpg --import ' . escapeshellarg($pubKey) . ' 2>&1', $gpgOut, $gpgRet);
+    // install.php frequently runs as root (when invoked via `sudo fwconsole ma
+    // install`), but FreePBX's signature verifier reads from the asterisk
+    // user's GPG keyring. If we just shell out to `gpg`, the key would land in
+    // /root/.gnupg and the verifier would never see it — the dashboard would
+    // then flag the module as "signed by an invalid key". Detect the current
+    // euid and drop to asterisk via `runuser` when we're root.
+    $asteriskUser = 'asterisk';
+    try {
+        if (class_exists('\\FreePBX')) {
+            $configured = \FreePBX::Config()->get('AMPASTERISKWEBUSER');
+            if (!empty($configured)) {
+                $asteriskUser = $configured;
+            }
+        }
+    } catch (\Throwable $e) {
+        // Stick with the default.
+    }
+
+    $imRoot = function_exists('posix_geteuid') && posix_geteuid() === 0;
+    $prefix = $imRoot ? 'runuser -u ' . escapeshellarg($asteriskUser) . ' -- ' : '';
+
+    @exec($prefix . 'gpg --import ' . escapeshellarg($pubKey) . ' 2>&1', $gpgOut, $gpgRet);
     if (function_exists('dbug')) {
         dbug('conferenceschedules: gpg --import returned ' . (int) $gpgRet);
     }
-    // FreePBX rejects "signed by an invalid key" when the imported public key
-    // sits at unknown trust. Push the ownertrust to ultimate so the verifier
-    // accepts the signature.
+
+    // Push the imported key's ownertrust to ultimate so FreePBX's verifier
+    // accepts the signature rather than reporting TRUST_UNDEFINED.
     if (file_exists($ownerTrust)) {
         @exec(
-            'gpg --import-ownertrust ' . escapeshellarg($ownerTrust) . ' 2>&1',
+            $prefix . 'gpg --import-ownertrust ' . escapeshellarg($ownerTrust) . ' 2>&1',
             $trustOut,
             $trustRet
         );
